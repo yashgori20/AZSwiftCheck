@@ -1,0 +1,33 @@
+apiVersion: apps/v1alpha1
+kind: ContainerApp
+metadata:
+  name: swiftcheck-api
+spec:
+  environmentId: /subscriptions/{subscription-id}/resourceGroups/{rg-name}/providers/Microsoft.App/managedEnvironments/{env-name}
+  template:
+    containers:
+    - name: swiftcheck-api
+      image: {your-acr-name}.azurecr.io/swiftcheck:latest
+      env:
+      - name: AZURE_ENVIRONMENT
+        value: "production"
+      - name: WEBSITES_PORT
+        value: "8000"
+      resources:
+        cpu: 1.0
+        memory: 2.0Gi
+    scale:
+      minReplicas: 1
+      maxReplicas: 10
+      rules:
+      - name: http-scaling
+        http:
+          metadata:
+            concurrentRequests: "30"
+  ingress:
+    external: true
+    targetPort: 8000
+    transport: http
+    traffic:
+    - weight: 100
+      latestRevision: true

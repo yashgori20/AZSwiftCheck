@@ -1,0 +1,32 @@
+# Background job container
+FROM python:3.11-slim
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN useradd -m -u 1000 jobuser
+USER jobuser
+
+# Set work directory
+WORKDIR /app
+
+# Copy requirements and install
+COPY --chown=jobuser:jobuser requirements.txt .
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+# Add user's pip bin to PATH
+ENV PATH="/home/jobuser/.local/bin:$PATH"
+
+# Copy application code
+COPY --chown=jobuser:jobuser . .
+
+# Run the job
+CMD ["python", "background_jobs/document_processor.py"]
