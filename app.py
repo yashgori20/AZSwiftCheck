@@ -1908,6 +1908,32 @@ def debug_audit():
         
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+@app.route("/debug/audit-check", methods=["GET"])
+def debug_audit_check():
+    """Check audit logs container"""
+    try:
+        from audit_logger import audit_logger
+        
+        # Get raw data from container
+        query = "SELECT * FROM c ORDER BY c.timestamp DESC"
+        items = list(audit_logger.container.query_items(
+            query=query,
+            enable_cross_partition_query=True,
+            max_item_count=10
+        ))
+        
+        return jsonify({
+            "success": True,
+            "raw_audit_logs": items,
+            "count": len(items)
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 @app.route("/cache/stats", methods=["GET"])
 def cache_stats():
     """Get cache statistics"""
