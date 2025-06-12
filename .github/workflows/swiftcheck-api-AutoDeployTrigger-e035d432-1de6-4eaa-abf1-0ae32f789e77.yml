@@ -1,57 +1,9 @@
-# name: Trigger auto deployment for swiftcheck-api
-
-# # When this action will be executed
-# on:
-#   # Automatically trigger it when detected changes in repo
-#   push:
-#     branches: 
-#       [ main ]
-#     paths:
-#     - '**'
-#     - '.github/workflows/swiftcheck-api-AutoDeployTrigger-e035d432-1de6-4eaa-abf1-0ae32f789e77.yml'
-
-#   # Allow manual trigger 
-#   workflow_dispatch:      
-
-# jobs:
-#   build-and-deploy:
-#     runs-on: ubuntu-latest
-#     permissions: 
-#       id-token: write #This is required for requesting the OIDC JWT Token
-#       contents: read #Required when GH token is used to authenticate with private repo
-
-#     steps:
-#       - name: Checkout to the branch
-#         uses: actions/checkout@v2
-
-#       - name: Azure Login
-#         uses: azure/login@v1
-#         with:
-#           client-id: ${{ secrets.SWIFTCHECKAPI_AZURE_CLIENT_ID }}
-#           tenant-id: ${{ secrets.SWIFTCHECKAPI_AZURE_TENANT_ID }}
-#           subscription-id: ${{ secrets.SWIFTCHECKAPI_AZURE_SUBSCRIPTION_ID }}
-
-#       - name: Build and push container image to registry
-#         uses: azure/container-apps-deploy-action@v2
-#         with:
-#           appSourcePath: ${{ github.workspace }}/Dockerfile.azure
-#           _dockerfilePathKey_: _dockerfilePath_
-#           registryUrl: swiftcheckacr.azurecr.io
-#           registryUsername: ${{ secrets.SWIFTCHECKAPI_REGISTRY_USERNAME }}
-#           registryPassword: ${{ secrets.SWIFTCHECKAPI_REGISTRY_PASSWORD }}
-#           containerAppName: swiftcheck-api
-#           resourceGroup: SwiftCheckAi
-#           imageToBuild: swiftcheckacr.azurecr.io/swiftcheck-api:${{ github.sha }}
-#           _buildArgumentsKey_: |
-#             _buildArgumentsValues_
-
-
 name: Deploy Swift Check AI
 
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:
 
 env:
   REGISTRY: swiftcheckacr.azurecr.io
@@ -63,7 +15,9 @@ env:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    
+    permissions:
+      id-token: write  # Grant write permissions to the id-token
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
