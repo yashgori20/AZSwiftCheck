@@ -1,4 +1,4 @@
-name: Trigger auto deployment for swiftcheck-api
+name: Trigger auto deployment for swiftcheck-apiAdd commentMore actions
 
 # When this action will be executed
 on:
@@ -44,5 +44,4 @@ jobs:
           imageToBuild: swiftcheckacr.azurecr.io/swiftcheck-api:${{ github.sha }}
           _buildArgumentsKey_: |
             _buildArgumentsValues_
-
-
+Add comment
