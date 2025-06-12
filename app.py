@@ -29,8 +29,6 @@ from flask import g
 from workflow_engine import workflow_engine, ApprovalStatus
 from tenant_manager import tenant_manager
 from analytics_engine import analytics_engine
-from pdf_reports import pdf_generator
-from audit_logger import audit_logger
 
 
 app = Flask(__name__)
@@ -2522,53 +2520,8 @@ def create_workflow():
         
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-@app.route("/reports/template/<request_id>", methods=["GET"])
-def generate_template_report(request_id):
-    """Generate PDF report for QC template"""
-    try:
-        # Get template data
-        template_json = cosmos_db.get_template_by_request_id(request_id)
-        parameters = cosmos_db.get_parameters_by_request_id(request_id)
-        
-        if not template_json:
-            return jsonify({"error": "Template not found"}), 404
-        
-        # Generate PDF
-        pdf_data = pdf_generator.generate_qc_template_report(
-            request_id, {"product_name": "Sample Product"}, parameters
-        )
-        
-        # Save to blob
-        filename = f"qc_template_report_{request_id}_{datetime.now().strftime('%Y%m%d')}.pdf"
-        blob_url = pdf_generator.save_report_to_blob(pdf_data, filename)
-        
-        return jsonify({
-            "success": True,
-            "report_url": blob_url,
-            "filename": filename
-        })
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
-# Audit endpoints
-@app.route("/audit/<tenant_id>", methods=["GET"])
-def get_audit_trail(tenant_id):
-    """Get audit trail for tenant"""
-    try:
-        days = int(request.args.get("days", 30))
-        resource_id = request.args.get("resource_id")
-        
-        audit_trail = audit_logger.get_audit_trail(tenant_id, resource_id, days)
-        
-        return jsonify({
-            "success": True,
-            "audit_trail": audit_trail,
-            "count": len(audit_trail)
-        })
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+
 @app.route("/workflow/approve", methods=["POST"])
 def submit_approval():
     """Submit approval decision"""
