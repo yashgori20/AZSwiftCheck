@@ -1,48 +1,34 @@
 name: Trigger auto deployment for swiftcheck-api
 
-# When this action will be executed
 on:
-  # Automatically trigger it when detected changes in repo
   push:
-    branches: 
-      [ main ]
-    paths:
-    - '**'
-    - '.github/workflows/swiftcheck-api-AutoDeployTrigger-a1e1d77c-3ac4-4ced-9684-c8e033f1174b.yml'
-
-  # Allow manual trigger 
+    branches: [ main ]
   workflow_dispatch:      
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    permissions: 
-      id-token: write #This is required for requesting the OIDC JWT Token
-      contents: read #Required when GH token is used to authenticate with private repo
-
+    permissions:
+      id-token: write
+      contents: read
     steps:
-      - name: Checkout to the branch
+      - name: Checkout
         uses: actions/checkout@v2
-
+      
       - name: Azure Login
         uses: azure/login@v1
         with:
           client-id: ${{ secrets.SWIFTCHECKAPI_AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.SWIFTCHECKAPI_AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.SWIFTCHECKAPI_AZURE_SUBSCRIPTION_ID }}
-
-      - name: Build and push container image to registry
+      
+      - name: Deploy to Container Apps
         uses: azure/container-apps-deploy-action@v2
         with:
           appSourcePath: ${{ github.workspace }}
-          _dockerfilePathKey_: Dockerfile.azure
+          dockerfilePath: Dockerfile.azure
+          containerAppName: swiftcheck-api
+          resourceGroup: SwiftCheckAi
           registryUrl: swiftcheckacr.azurecr.io
           registryUsername: ${{ secrets.SWIFTCHECKAPI_REGISTRY_USERNAME }}
           registryPassword: ${{ secrets.SWIFTCHECKAPI_REGISTRY_PASSWORD }}
-          containerAppName: swiftcheck-api
-          resourceGroup: SwiftCheckAi
-          imageToBuild: swiftcheckacr.azurecr.io/swiftcheck-api:${{ github.sha }}
-          _buildArgumentsKey_: |
-            _buildArgumentsValues_
-
-
