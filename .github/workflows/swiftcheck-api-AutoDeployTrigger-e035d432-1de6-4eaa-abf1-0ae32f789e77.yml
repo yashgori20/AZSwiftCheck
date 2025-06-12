@@ -53,14 +53,19 @@ jobs:
         tenant-id: ${{ secrets.SWIFTCHECKAPI_AZURE_TENANT_ID }}
         subscription-id: ${{ secrets.SWIFTCHECKAPI_AZURE_SUBSCRIPTION_ID }}
     
+    - name: Set up Azure CLI
+      run: |
+        curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
     - name: Update Azure Container App with new image
       run: |
+        set -e
         az containerapp update \
           --name ${{ env.CONTAINER_APP_NAME }} \
           --resource-group ${{ env.RESOURCE_GROUP }} \
           --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-          --environment ${{ env.CONTAINER_APP_ENV }}
-      
+          --environment ${{ env.CONTAINER_APP_ENV }} || { echo "Error occurred during container update"; exit 1; }
+
     - name: Notify deployment complete
       run: |
         echo "✅ Container App updated with new image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
