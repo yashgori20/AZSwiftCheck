@@ -1886,6 +1886,28 @@ def view_history():
         
     except Exception as e:
         return f"<h1>Error</h1><p>{str(e)}</p>", 500
+@app.route("/debug/audit", methods=["POST"])
+def debug_audit():
+    """Debug audit logging"""
+    try:
+        from audit_logger import audit_logger
+        
+        # Manual audit log test
+        audit_logger.log_event(
+            event_type="DEBUG_TEST",
+            entity_type="TEMPLATE", 
+            entity_id="debug-test-123",
+            details={"test": "manual audit log"},
+            tenant_id="default"
+        )
+        
+        return jsonify({
+            "success": True,
+            "message": "Debug audit log created"
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 @app.route("/cache/stats", methods=["GET"])
 def cache_stats():
     """Get cache statistics"""
