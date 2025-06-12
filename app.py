@@ -1825,22 +1825,60 @@ def view_history():
             <title>QC Request History</title>
             <style>
                 body { font-family: Arial, sans-serif; margin: 20px; background-color: #f8f9fa; }
-                .container { max-width: 1400px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+                .container { max-width: 1600px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
                 table { border-collapse: collapse; width: 100%; margin-top: 20px; }
                 th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
                 th { background-color: #4CAF50; color: white; font-weight: bold; }
                 tr:nth-child(even) { background-color: #f2f2f2; }
                 tr:hover { background-color: #e8f5e8; }
-                a { color: #4CAF50; text-decoration: none; margin: 0 5px; padding: 4px 8px; border-radius: 3px; }
+                a { color: #4CAF50; text-decoration: none; margin: 0 3px; padding: 4px 8px; border-radius: 3px; font-size: 12px; }
                 a:hover { background-color: #4CAF50; color: white; }
+                .btn-pdf { background-color: #dc3545; color: white; border: none; padding: 4px 8px; border-radius: 3px; cursor: pointer; font-size: 12px; margin: 0 3px; }
+                .btn-pdf:hover { background-color: #c82333; color: white; }
                 .badge { background: #28a745; color: white; padding: 2px 6px; border-radius: 10px; font-size: 11px; }
                 .param-count { font-weight: bold; color: #007bff; }
                 h1 { color: #333; text-align: center; margin-bottom: 30px; }
+                .actions { white-space: nowrap; }
             </style>
+            <script>
+                function generatePDF(requestId, productName) {
+                    const button = event.target;
+                    const originalText = button.textContent;
+                    button.textContent = 'Generating...';
+                    button.disabled = true;
+                    
+                    const link = document.createElement('a');
+                    link.href = '/pdf/template/' + requestId;
+                    link.download = 'QC_Report_' + productName.replace(/[^a-zA-Z0-9]/g, '_') + '.pdf';
+                    
+                    fetch('/pdf/template/' + requestId)
+                        .then(response => {
+                            if (response.ok) {
+                                link.click();
+                                button.textContent = '✓ Downloaded';
+                                setTimeout(() => {
+                                    button.textContent = originalText;
+                                    button.disabled = false;
+                                }, 2000);
+                            } else {
+                                throw new Error('PDF generation failed');
+                            }
+                        })
+                        .catch(error => {
+                            button.textContent = '✗ Failed';
+                            button.style.backgroundColor = '#dc3545';
+                            setTimeout(() => {
+                                button.textContent = originalText;
+                                button.disabled = false;
+                                button.style.backgroundColor = '';
+                            }, 3000);
+                        });
+                }
+            </script>
         </head>
         <body>
             <div class="container">
-                <h1>QC Request History </h1>
+                <h1>QC Request History 📊</h1>
                 <table>
                     <tr>
                         <th>ID</th>
@@ -1855,17 +1893,22 @@ def view_history():
         
         for row in rows:
             param_badge = "🎯" if row[5] >= 15 else "⚠️" if row[5] >= 10 else "❌"
+            clean_product_name = row[2].replace(' ', '_').replace(',', '').replace('(', '').replace(')', '')
+            
             html += f"""
                 <tr>
-                    <td>{row[0]}</td>
+                    <td>{row[0][:8]}...</td>
                     <td><strong>{row[2]}</strong></td>
                     <td>{row[1]}</td>
                     <td>{row[3]}</td>
                     <td class="param-count">{param_badge} {row[5]} params</td>
-                    <td>{row[4]}</td>
-                    <td>
-                        <a href="/preview/{row[0]}">Preview</a>
-                        <a href="/template/{row[0]}">JSON</a>
+                    <td>{row[4][:10]}</td>
+                    <td class="actions">
+                        <a href="/preview/{row[0]}">👁️ Preview</a>
+                        <a href="/template/{row[0]}">📄 JSON</a>
+                        <button class="btn-pdf" onclick="generatePDF('{row[0]}', '{clean_product_name}')">
+                            📊 Generate Report
+                        </button>
                     </td>
                 </tr>
             """
@@ -1878,6 +1921,9 @@ def view_history():
                     ⚠️ 10-14 params (Good) | 
                     ❌ <10 params (Basic)
                 </div>
+                <div style="margin-top: 15px; padding: 15px; background: #fff3cd; border-radius: 5px;">
+                    <strong>📊 New Feature:</strong> Click "Generate Report" to download a professional PDF report for any template!
+                </div>
             </div>
         </body>
         </html>
@@ -1886,6 +1932,9 @@ def view_history():
         
     except Exception as e:
         return f"<h1>Error</h1><p>{str(e)}</p>", 500
+
+
+
 @app.route("/debug/audit", methods=["POST"])
 def debug_audit():
     """Debug audit logging"""
