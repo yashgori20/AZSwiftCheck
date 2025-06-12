@@ -44,4 +44,3 @@ jobs:
           imageToBuild: swiftcheckacr.azurecr.io/swiftcheck-api:${{ github.sha }}
           _buildArgumentsKey_: |
             _buildArgumentsValues_
-Add comment
