@@ -1,4 +1,4 @@
-﻿gunicorn>=21.2.0
+gunicorn>=21.2.0
 flask>=3.0.0
 azure-cosmos>=4.5.1
 azure-identity>=1.15.0
