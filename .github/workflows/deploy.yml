@@ -1,5 +1,5 @@
 @@ -0,0 +1,43 @@
-name: Deploy Swift Check AIAdd commentMore actions
+name: Deploy Swiift Check AIAdd commentMore actions
 
 on:
   push:
