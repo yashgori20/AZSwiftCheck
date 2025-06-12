@@ -9,7 +9,7 @@ from PIL import Image
 import pytesseract
 import fitz  
 from werkzeug.utils import secure_filename
-from flask import Flask, request, jsonify, redirect, url_for, render_template_string
+from flask import Flask, request, jsonify, redirect, url_for, render_template_string, Response
 from pathlib import Path
 import requests
 from cosmos_db_utils import enhanced_cosmos_db as cosmos_db
@@ -2680,7 +2680,52 @@ def rate_limits_info():
         "redis_connected": azure_cache.redis_client.ping()
     })
 
+@app.route("/pdf/template/<request_id>", methods=["GET"])
+def generate_template_pdf(request_id):
+    """Generate PDF report for QC template"""
+    try:
+        from pdf_generator import pdf_generator
+        
+        pdf_bytes = pdf_generator.generate_qc_template_report(request_id)
+        
+        if pdf_bytes:
+            return Response(
+                pdf_bytes,
+                mimetype='application/pdf',
+                headers={
+                    'Content-Disposition': f'attachment; filename=qc_template_{request_id}.pdf'
+                }
+            )
+        else:
+            return jsonify({"error": "Template not found or PDF generation failed"}), 404
+            
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
+@app.route("/pdf/analytics", methods=["GET"])
+def generate_analytics_pdf():
+    """Generate analytics PDF report"""
+    try:
+        from pdf_generator import pdf_generator
+        
+        tenant_id = request.args.get("tenant_id", "default")
+        days = int(request.args.get("days", 30))
+        
+        pdf_bytes = pdf_generator.generate_analytics_report(tenant_id, days)
+        
+        if pdf_bytes:
+            return Response(
+                pdf_bytes,
+                mimetype='application/pdf',
+                headers={
+                    'Content-Disposition': f'attachment; filename=analytics_report_{tenant_id}.pdf'
+                }
+            )
+        else:
+            return jsonify({"error": "Analytics data not found"}), 404
+            
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 @app.route("/admin/setup-containers", methods=["POST"])
 def setup_containers():
     """Setup missing containers"""
