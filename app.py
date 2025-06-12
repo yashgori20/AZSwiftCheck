@@ -29,7 +29,7 @@ from flask import g
 from workflow_engine import workflow_engine, ApprovalStatus
 from tenant_manager import tenant_manager
 from analytics_engine import analytics_engine
-
+from audit_logger import audit_log
 
 app = Flask(__name__)
 azure_monitoring.init_app(app)
@@ -1165,6 +1165,7 @@ def index():
 
 @app.route("/refine", methods=["POST"])
 @rate_limit("/refine")
+@audit_log("CREATE", "TEMPLATE", lambda result, *args, **kwargs: result.json.get('request_id') if hasattr(result, 'json') else 'unknown')
 def refine_parameters():
     """refine endpoint with comprehensive RAG and intelligent parameter generation"""
     global global_parameters
@@ -1303,6 +1304,7 @@ def refine_parameters():
     
 @app.route("/edit", methods=["POST"])
 @rate_limit("/edit")
+@audit_log("UPDATE", "TEMPLATE", lambda result, *args, **kwargs: result.json.get('request_id') if hasattr(result, 'json') else 'unknown')
 def edit_parameters():
     """edit endpoint with comprehensive context and intelligent optimization - NOW ACCEPTS JSON FILE"""
     global global_parameters
@@ -1596,6 +1598,7 @@ def edit_parameters():
 
 @app.route("/digitize", methods=["POST"])
 @rate_limit("/digitize")
+@audit_log("CREATE", "TEMPLATE", lambda result, *args, **kwargs: result.json.get('request_id') if hasattr(result, 'json') else 'unknown')
 def digitize_checklist():
     """digitization with advanced OCR and intelligent parameter extraction"""
     print(">> /digitize route called <<")
@@ -2367,7 +2370,48 @@ def trigger_background_processing(blob_url, container_name, blob_name, request_i
     except Exception as e:
         print(f"❌ Error triggering background processing: {e}")
         return False
+@app.route("/audit/trail", methods=["GET"])
+def get_audit_trail():
+    """Get audit trail"""
+    try:
+        from audit_logger import audit_logger
+        
+        entity_type = request.args.get("entity_type")
+        entity_id = request.args.get("entity_id")
+        tenant_id = request.args.get("tenant_id", "default")
+        limit = int(request.args.get("limit", 100))
+        
+        trail = audit_logger.get_audit_trail(entity_type, entity_id, tenant_id, limit)
+        
+        return jsonify({
+            "success": True,
+            "audit_trail": trail,
+            "count": len(trail)
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
+@app.route("/audit/user/<user_id>", methods=["GET"])
+def get_user_audit(user_id):
+    """Get user audit activity"""
+    try:
+        from audit_logger import audit_logger
+        
+        tenant_id = request.args.get("tenant_id", "default")
+        days = int(request.args.get("days", 30))
+        
+        activity = audit_logger.get_user_activity(user_id, tenant_id, days)
+        
+        return jsonify({
+            "success": True,
+            "user_id": user_id,
+            "activity_summary": activity,
+            "period_days": days
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 @app.route("/jobs/trigger", methods=["POST"])
 def trigger_manual_job():
     """Manually trigger background processing job (for testing)"""
