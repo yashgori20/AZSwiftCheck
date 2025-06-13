@@ -2551,16 +2551,26 @@ def check_upload_status(request_id):
         return jsonify({"error": str(e)}), 500
 
 def trigger_background_processing(blob_url, container_name, blob_name, request_id):
-    """Trigger background processing job"""
+    """Trigger background processing job with Event Grid notifications"""
     try:
-        # For now, we'll simulate triggering a Container Apps Job
-        # In actual deployment, this would trigger via Event Grid or HTTP call
+        # Extract metadata for event
+        from pathlib import Path
+        filename = Path(blob_name).name
         
-        print(f"🔄 Would trigger background job for: {blob_name}")
-        print(f"   - Blob URL: {blob_url}")
-        print(f"   - Request ID: {request_id}")
+        # Send Event Grid event for document upload
+        success = working_event_handler.send_file_upload_event(
+            blob_name=blob_name,
+            request_id=request_id,
+            metadata={
+                "filename": filename,
+                "blob_url": blob_url,
+                "container": container_name,
+                "file_type": filename.split('.')[-1] if '.' in filename else "unknown",
+                "uploaded_at": datetime.now().isoformat()
+            }
+        )
         
-        # Update request status to indicate processing started
+        # Update request status in Cosmos DB
         query = "SELECT * FROM c WHERE c.id = @request_id"
         items = list(cosmos_db.qc_requests.query_items(
             query=query,
@@ -2572,18 +2582,23 @@ def trigger_background_processing(blob_url, container_name, blob_name, request_i
             request_doc["processing_status"] = "processing"
             request_doc["blob_url"] = blob_url
             request_doc["blob_name"] = blob_name
+            request_doc["event_sent"] = success
             request_doc["updated_at"] = datetime.now().isoformat()
             
             cosmos_db.qc_requests.replace_item(
                 item=request_doc["id"], 
                 body=request_doc
             )
+            
+            print(f"✅ Updated request {request_id} status with Event Grid result: {success}")
         
         return True
         
     except Exception as e:
-        print(f"❌ Error triggering background processing: {e}")
+        print(f"❌ Error in background processing trigger: {e}")
         return False
+    
+    
 @app.route("/audit/trail", methods=["GET"])
 def get_audit_trail():
     """Get audit trail"""
@@ -3027,3 +3042,5 @@ def setup_containers():
 if __name__ == "__main__":
     print("🚀 Starting Swift Check API v2.0...")
     app.run(host="127.0.0.1", port=5000, debug=True)
+# Import working Event Grid handler
+from event_grid_integration import working_event_handler
