@@ -1,68 +1,3 @@
-# name: Deploy Swift Check AI
-
-# on:
-#   push:
-#     branches: [ main ]
-#   workflow_dispatch:
-
-# env:
-#   REGISTRY: swiftcheckacr.azurecr.io
-#   IMAGE_NAME: swiftcheck-api
-#   CONTAINER_APP_NAME: swiftcheck-api
-#   RESOURCE_GROUP: SwiftCheckAi
-
-# jobs:
-#   build-and-push:
-#     runs-on: ubuntu-latest
-#     permissions:
-#       id-token: write
-
-#     steps:
-#     - name: Checkout code
-#       uses: actions/checkout@v4
-    
-#     - name: Set up Docker Buildx
-#       uses: docker/setup-buildx-action@v3
-    
-#     - name: Log in to Azure Container Registry
-#       uses: azure/docker-login@v1
-#       with:
-#         login-server: ${{ env.REGISTRY }}
-#         username: ${{ secrets.SWIFTCHECKAPI_REGISTRY_USERNAME }}
-#         password: ${{ secrets.SWIFTCHECKAPI_REGISTRY_PASSWORD }}
-    
-#     - name: Build and push Docker image
-#       uses: docker/build-push-action@v5
-#       with:
-#         context: .
-#         file: ./Dockerfile.azure
-#         push: true
-#         tags: |
-#           ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-#           ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-    
-#     - name: Azure Login
-#       uses: azure/login@v1
-#       with:
-#         client-id: ${{ secrets.SWIFTCHECKAPI_AZURE_CLIENT_ID }}
-#         tenant-id: ${{ secrets.SWIFTCHECKAPI_AZURE_TENANT_ID }}
-#         subscription-id: ${{ secrets.SWIFTCHECKAPI_AZURE_SUBSCRIPTION_ID }}
-    
-#     - name: Update Azure Container App
-#       run: |
-#         az containerapp update \
-#           --name ${{ env.CONTAINER_APP_NAME }} \
-#           --resource-group ${{ env.RESOURCE_GROUP }} \
-#           --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-
-#     - name: Notify deployment complete
-#       run: |
-#         echo "✅ Deployment successful!"
-#         echo "🚀 Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
-#         echo "📱 URL: https://swiftcheck-api.agreeabletree-bb0198f9.uaenorth.azurecontainerapps.io"
-
-
-
 name: Deploy Swift Check AI
 
 on:
@@ -75,7 +10,6 @@ env:
   IMAGE_NAME: swiftcheck-api
   CONTAINER_APP_NAME: swiftcheck-api
   RESOURCE_GROUP: SwiftCheckAi
-  ACR_NAME: swiftcheckacr
 
 jobs:
   build-and-push:
@@ -121,53 +55,9 @@ jobs:
           --resource-group ${{ env.RESOURCE_GROUP }} \
           --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-    - name: Clean up old ACR images
-      run: |
-        echo "🧹 Starting ACR cleanup process..."
-        
-        # Get all tags ordered by creation time (newest first), excluding 'latest'
-        tags=$(az acr repository show-tags \
-          --name ${{ env.ACR_NAME }} \
-          --repository ${{ env.IMAGE_NAME }} \
-          --orderby time_desc \
-          --output tsv \
-          --query "[?name!='latest'].name")
-        
-        # Convert to array
-        tag_array=($tags)
-        tag_count=${#tag_array[@]}
-        
-        echo "Found $tag_count tags (excluding 'latest')"
-        
-        if [ $tag_count -gt 2 ]; then
-          tags_to_delete=${tag_array[@]:2}
-          delete_count=$((tag_count - 2))
-          
-          echo "Will delete $delete_count old tags"
-          
-          for tag in $tags_to_delete; do
-            echo "Deleting tag: $tag"
-            az acr repository delete \
-              --name ${{ env.ACR_NAME }} \
-              --image "${{ env.IMAGE_NAME }}:$tag" \
-              --yes
-          done
-          
-          echo "✅ Cleanup completed - deleted $delete_count old images"
-        else
-          echo "Only $tag_count tags found, no cleanup needed"
-        fi
-
-    - name: Check repository size
-      run: |
-        echo "📊 Repository information:"
-        az acr repository show \
-          --name ${{ env.ACR_NAME }} \
-          --repository ${{ env.IMAGE_NAME }} \
-          --output table
-
     - name: Notify deployment complete
       run: |
         echo "✅ Deployment successful!"
         echo "🚀 Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
         echo "📱 URL: https://swiftcheck-api.agreeabletree-bb0198f9.uaenorth.azurecontainerapps.io"
+
