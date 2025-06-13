@@ -1,3 +1,68 @@
+# name: Deploy Swift Check AI
+
+# on:
+#   push:
+#     branches: [ main ]
+#   workflow_dispatch:
+
+# env:
+#   REGISTRY: swiftcheckacr.azurecr.io
+#   IMAGE_NAME: swiftcheck-api
+#   CONTAINER_APP_NAME: swiftcheck-api
+#   RESOURCE_GROUP: SwiftCheckAi
+
+# jobs:
+#   build-and-push:
+#     runs-on: ubuntu-latest
+#     permissions:
+#       id-token: write
+
+#     steps:
+#     - name: Checkout code
+#       uses: actions/checkout@v4
+    
+#     - name: Set up Docker Buildx
+#       uses: docker/setup-buildx-action@v3
+    
+#     - name: Log in to Azure Container Registry
+#       uses: azure/docker-login@v1
+#       with:
+#         login-server: ${{ env.REGISTRY }}
+#         username: ${{ secrets.SWIFTCHECKAPI_REGISTRY_USERNAME }}
+#         password: ${{ secrets.SWIFTCHECKAPI_REGISTRY_PASSWORD }}
+    
+#     - name: Build and push Docker image
+#       uses: docker/build-push-action@v5
+#       with:
+#         context: .
+#         file: ./Dockerfile.azure
+#         push: true
+#         tags: |
+#           ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+#           ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+    
+#     - name: Azure Login
+#       uses: azure/login@v1
+#       with:
+#         client-id: ${{ secrets.SWIFTCHECKAPI_AZURE_CLIENT_ID }}
+#         tenant-id: ${{ secrets.SWIFTCHECKAPI_AZURE_TENANT_ID }}
+#         subscription-id: ${{ secrets.SWIFTCHECKAPI_AZURE_SUBSCRIPTION_ID }}
+    
+#     - name: Update Azure Container App
+#       run: |
+#         az containerapp update \
+#           --name ${{ env.CONTAINER_APP_NAME }} \
+#           --resource-group ${{ env.RESOURCE_GROUP }} \
+#           --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+#     - name: Notify deployment complete
+#       run: |
+#         echo "✅ Deployment successful!"
+#         echo "🚀 Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+#         echo "📱 URL: https://swiftcheck-api.agreeabletree-bb0198f9.uaenorth.azurecontainerapps.io"
+
+
+
 name: Deploy Swift Check AI
 
 on:
@@ -11,7 +76,6 @@ env:
   CONTAINER_APP_NAME: swiftcheck-api
   RESOURCE_GROUP: SwiftCheckAi
   ACR_NAME: swiftcheckacr
-  IMAGES_TO_KEEP: 2
 
 jobs:
   build-and-push:
@@ -56,265 +120,54 @@ jobs:
           --name ${{ env.CONTAINER_APP_NAME }} \
           --resource-group ${{ env.RESOURCE_GROUP }} \
           --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-    
+
+    - name: Clean up old ACR images
+      run: |
+        echo "🧹 Starting ACR cleanup process..."
+        
+        # Get all tags ordered by creation time (newest first), excluding 'latest'
+        tags=$(az acr repository show-tags \
+          --name ${{ env.ACR_NAME }} \
+          --repository ${{ env.IMAGE_NAME }} \
+          --orderby time_desc \
+          --output tsv \
+          --query "[?name!='latest'].name")
+        
+        # Convert to array
+        tag_array=($tags)
+        tag_count=${#tag_array[@]}
+        
+        echo "Found $tag_count tags (excluding 'latest')"
+        
+        if [ $tag_count -gt 2 ]; then
+          tags_to_delete=${tag_array[@]:2}
+          delete_count=$((tag_count - 2))
+          
+          echo "Will delete $delete_count old tags"
+          
+          for tag in $tags_to_delete; do
+            echo "Deleting tag: $tag"
+            az acr repository delete \
+              --name ${{ env.ACR_NAME }} \
+              --image "${{ env.IMAGE_NAME }}:$tag" \
+              --yes
+          done
+          
+          echo "✅ Cleanup completed - deleted $delete_count old images"
+        else
+          echo "Only $tag_count tags found, no cleanup needed"
+        fi
+
+    - name: Check repository size
+      run: |
+        echo "📊 Repository information:"
+        az acr repository show \
+          --name ${{ env.ACR_NAME }} \
+          --repository ${{ env.IMAGE_NAME }} \
+          --output table
+
     - name: Notify deployment complete
       run: |
         echo "✅ Deployment successful!"
         echo "🚀 Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
         echo "📱 URL: https://swiftcheck-api.agreeabletree-bb0198f9.uaenorth.azurecontainerapps.io"
-
-  # Cleanup job that runs after successful deployment
-  cleanup-acr:
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    if: success()  # Only run if deployment was successful
-    permissions:
-      id-token: write  # Required for Azure OIDC authentication
-    
-    steps:
-    # Azure authentication for ACR operations
-    - name: Azure Login
-      uses: azure/login@v1
-      with:
-        client-id: ${{ secrets.SWIFTCHECKAPI_AZURE_CLIENT_ID }}
-        tenant-id: ${{ secrets.SWIFTCHECKAPI_AZURE_TENANT_ID }}
-        subscription-id: ${{ secrets.SWIFTCHECKAPI_AZURE_SUBSCRIPTION_ID }}
-
-    # Verify Azure authentication and subscription
-    - name: Verify Azure connection and find ACR
-      run: |
-        echo "🔍 Verifying Azure authentication..."
-        az account show
-        echo ""
-        echo "📋 Current subscription details:"
-        az account show --query '{name:name, id:id, state:state}' --output table
-        echo ""
-        echo "🔍 Searching for ACR in all accessible subscriptions..."
-        
-        # Find the ACR across all subscriptions
-        echo "Available ACRs:"
-        az acr list --query '[].{Name:name, ResourceGroup:resourceGroup, LoginServer:loginServer, Subscription:subscription}' --output table || echo "No ACRs found or insufficient permissions"
-        
-        # Try to find the specific ACR
-        acr_info=$(az acr list --query "[?name=='${{ env.ACR_NAME }}']" --output json)
-        if [ "$(echo "$acr_info" | jq length)" -eq 0 ]; then
-          echo "❌ ACR '${{ env.ACR_NAME }}' not found in current subscription"
-          echo "🔍 Checking if ACR exists with different name..."
-          az acr list --query '[].name' --output table
-        else
-          echo "✅ Found ACR: ${{ env.ACR_NAME }}"
-          echo "$acr_info" | jq -r '.[0] | "ResourceGroup: \(.resourceGroup), LoginServer: \(.loginServer)"'
-        fi
-
-    # Use Docker login with registry credentials for ACR operations
-    - name: Log in to Azure Container Registry using Docker
-      uses: azure/docker-login@v1
-      with:
-        login-server: ${{ env.REGISTRY }}
-        username: ${{ secrets.SWIFTCHECKAPI_REGISTRY_USERNAME }}
-        password: ${{ secrets.SWIFTCHECKAPI_REGISTRY_PASSWORD }}
-
-    # Verify ACR access using registry credentials
-    - name: Verify ACR access using registry credentials
-      run: |
-        echo "🔐 Testing ACR access using registry credentials..."
-        
-        # Test access by listing repositories
-        if curl -s -u "${{ secrets.SWIFTCHECKAPI_REGISTRY_USERNAME }}:${{ secrets.SWIFTCHECKAPI_REGISTRY_PASSWORD }}" \
-           "https://${{ env.REGISTRY }}/v2/_catalog" | jq -e '.repositories' > /dev/null 2>&1; then
-          echo "✅ Successfully authenticated to ACR using registry credentials"
-        else
-          echo "❌ Failed to authenticate to ACR using registry credentials"
-          echo "🔄 Attempting Azure CLI login to ACR..."
-          
-          # Only try az acr login if registry credentials fail
-          if ! az acr login --name ${{ env.ACR_NAME }}; then
-            echo "❌ Both authentication methods failed"
-            echo "💡 Will proceed with direct REST API calls using registry credentials"
-          fi
-        fi
-
-    - name: Get current image tags
-      id: get-tags
-      run: |
-        echo "🔍 Getting tags for ${{ env.IMAGE_NAME }}..."
-        
-        # Use REST API with registry credentials as primary method
-        echo "🔄 Using REST API to get tags..."
-        if tag_response=$(curl -s -u "${{ secrets.SWIFTCHECKAPI_REGISTRY_USERNAME }}:${{ secrets.SWIFTCHECKAPI_REGISTRY_PASSWORD }}" \
-                         "https://${{ env.REGISTRY }}/v2/${{ env.IMAGE_NAME }}/tags/list"); then
-          
-          # Check if response is valid JSON
-          if echo "$tag_response" | jq empty 2>/dev/null; then
-            # Extract all tags
-            all_tags=$(echo "$tag_response" | jq -r '.tags[]?' 2>/dev/null)
-            
-            if [ -n "$all_tags" ]; then
-              # Create a simple JSON array: latest first (if exists), then others sorted
-              {
-                if echo "$all_tags" | grep -q '^latest$'; then
-                  echo '"latest"'
-                fi
-                echo "$all_tags" | grep -v '^latest$' | sort -r | jq -R .
-              } | jq -s . > /tmp/tags.json
-              
-              tags=$(cat /tmp/tags.json)
-            else
-              tags="[]"
-            fi
-            
-            echo "✅ Successfully retrieved tags using REST API"
-          else
-            echo "❌ Invalid JSON response from REST API"
-            tags="[]"
-          fi
-        else
-          echo "❌ REST API failed, trying Azure CLI..."
-          # Fallback to Azure CLI
-          if tags=$(az acr repository show-tags --name ${{ env.ACR_NAME }} --repository ${{ env.IMAGE_NAME }} --orderby time_desc --output json 2>/dev/null); then
-            echo "✅ Retrieved tags using Azure CLI"
-          else
-            echo "❌ Both methods failed, setting empty tags array"
-            tags="[]"
-          fi
-        fi
-        
-        # Final validation that tags is valid JSON
-        if ! echo "$tags" | jq empty 2>/dev/null; then
-          echo "⚠️ Invalid JSON in tags, resetting to empty array"
-          tags="[]"
-        fi
-        
-        # Clean up any temporary files
-        rm -f /tmp/tags.json
-        
-        # Output the tags (must be on a single line for GitHub Actions)
-        tags_single_line=$(echo "$tags" | jq -c .)
-        echo "tags=$tags_single_line" >> "$GITHUB_OUTPUT"
-        
-        tag_count=$(echo "$tags" | jq length)
-        echo "📊 Found $tag_count total tags"
-        
-        # Debug: Show the tags
-        echo "🏷️ Current tags:"
-        if [ "$tag_count" -gt 0 ]; then
-          echo "$tags" | jq -r '.[]'
-        else
-          echo "No tags found"
-        fi
-
-    - name: Clean up old image tags
-      run: |
-        tags='${{ steps.get-tags.outputs.tags }}'
-        tag_count=$(echo "$tags" | jq length)
-        
-        if [ "$tag_count" -gt ${{ env.IMAGES_TO_KEEP }} ]; then
-          echo "🧹 Found $tag_count tags, keeping ${{ env.IMAGES_TO_KEEP }}, deleting $((tag_count - ${{ env.IMAGES_TO_KEEP }}))"
-          
-          # Get tags to delete (skip the first N to keep)
-          tags_to_delete=$(echo "$tags" | jq -r '.[${{ env.IMAGES_TO_KEEP }}:][]')
-          
-          for tag in $tags_to_delete; do
-            if [ -n "$tag" ] && [ "$tag" != "null" ]; then
-              echo "🗑️ Deleting image tag: $tag"
-              
-              # Use REST API for deletion as primary method
-              if curl -s -X DELETE -u "${{ secrets.SWIFTCHECKAPI_REGISTRY_USERNAME }}:${{ secrets.SWIFTCHECKAPI_REGISTRY_PASSWORD }}" \
-                      "https://${{ env.REGISTRY }}/v2/${{ env.IMAGE_NAME }}/manifests/$tag" | grep -q "202\|404"; then
-                echo "✅ Deleted tag: $tag"
-              else
-                echo "🔄 REST API deletion failed, trying Azure CLI..."
-                # Fallback to Azure CLI
-                if az acr repository delete --name ${{ env.ACR_NAME }} --image "${{ env.IMAGE_NAME }}:$tag" --yes 2>/dev/null; then
-                  echo "✅ Deleted tag using Azure CLI: $tag"
-                else
-                  echo "⚠️ Failed to delete tag: $tag (may not exist or insufficient permissions)"
-                fi
-              fi
-            fi
-          done
-          
-          echo "✅ Completed tag cleanup process"
-        else
-          echo "ℹ️ Only $tag_count tags found, no cleanup needed"
-        fi
-
-    - name: Clean up untagged images
-      run: |
-        echo "🧹 Cleaning up untagged/dangling images..."
-        
-        # Add error handling for untagged image cleanup
-        if untagged_manifests=$(az acr repository show-manifests --name ${{ env.ACR_NAME }} --repository ${{ env.IMAGE_NAME }} --query "[?tags[0]==null].digest" -o tsv 2>/dev/null); then
-          if [ -n "$untagged_manifests" ]; then
-            echo "$untagged_manifests" | while read -r digest; do
-              if [ -n "$digest" ]; then
-                echo "🗑️ Deleting untagged manifest: $digest"
-                az acr repository delete --name ${{ env.ACR_NAME }} --image "${{ env.IMAGE_NAME }}@$digest" --yes || echo "⚠️ Failed to delete manifest: $digest"
-              fi
-            done
-            echo "✅ Cleaned up untagged images"
-          else
-            echo "ℹ️ No untagged images found"
-          fi
-        else
-          echo "⚠️ Could not retrieve manifest information"
-        fi
-
-    - name: Clean up old Container App revisions
-      run: |
-        echo "🧹 Cleaning up old Container App revisions..."
-        
-        # Add error handling for revision cleanup
-        if revisions=$(az containerapp revision list --name ${{ env.CONTAINER_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query '[].name' -o json 2>/dev/null); then
-          revision_count=$(echo "$revisions" | jq length)
-          
-          if [ "$revision_count" -gt ${{ env.IMAGES_TO_KEEP }} ]; then
-            echo "📊 Found $revision_count revisions, keeping ${{ env.IMAGES_TO_KEEP }}, deactivating $((revision_count - ${{ env.IMAGES_TO_KEEP }}))"
-            
-            # Get revisions to deactivate (skip the first N to keep)
-            revisions_to_deactivate=$(echo "$revisions" | jq -r '.[${{ env.IMAGES_TO_KEEP }}:][]')
-            
-            for revision in $revisions_to_deactivate; do
-              if [ -n "$revision" ] && [ "$revision" != "null" ]; then
-                echo "🗑️ Deactivating revision: $revision"
-                az containerapp revision deactivate --name ${{ env.CONTAINER_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --revision "$revision" || echo "⚠️ Failed to deactivate revision: $revision"
-              fi
-            done
-            
-            echo "✅ Completed revision cleanup process"
-          else
-            echo "ℹ️ Only $revision_count revisions found, no cleanup needed"
-          fi
-        else
-          echo "⚠️ Could not retrieve revision information"
-        fi
-
-    - name: Show final cleanup summary
-      run: |
-        echo "📊 === CLEANUP SUMMARY ==="
-        
-        echo "🏷️ Registry Info:"
-        echo "Registry: ${{ env.REGISTRY }}"
-        echo "Repository: ${{ env.IMAGE_NAME }}"
-        
-        echo ""
-        echo "📋 Remaining image tags:"
-        # Use REST API to get final tag list
-        if remaining_tags=$(curl -s -u "${{ secrets.SWIFTCHECKAPI_REGISTRY_USERNAME }}:${{ secrets.SWIFTCHECKAPI_REGISTRY_PASSWORD }}" \
-                           "https://${{ env.REGISTRY }}/v2/${{ env.IMAGE_NAME }}/tags/list" | \
-                           jq -r '.tags[]? // empty' 2>/dev/null); then
-          if [ -n "$remaining_tags" ]; then
-            echo "$remaining_tags"
-          else
-            echo "No tags found"
-          fi
-        else
-          echo "⚠️ Could not retrieve current tags"
-        fi
-        
-        echo ""
-        echo "🔄 Active Container App revisions:"
-        az containerapp revision list --name ${{ env.CONTAINER_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query '[].{Name:name,CreatedTime:properties.createdTime,Active:properties.active}' -o table 2>/dev/null || echo "⚠️ Could not retrieve revision info"
-        
-        echo ""
-        echo "💾 Storage cleanup complete! 🎉"
