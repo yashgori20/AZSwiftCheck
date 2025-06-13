@@ -14,6 +14,7 @@ env:
   IMAGES_TO_KEEP: 2
 
 jobs:
+  # ──────────────────────────────────────────────────────────────────────────
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
@@ -22,17 +23,17 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-    
+
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
-    
+
     - name: Log in to Azure Container Registry
       uses: azure/docker-login@v1
       with:
         login-server: ${{ env.REGISTRY }}
         username: ${{ secrets.SWIFTCHECKAPI_REGISTRY_USERNAME }}
         password: ${{ secrets.SWIFTCHECKAPI_REGISTRY_PASSWORD }}
-    
+
     - name: Build and push Docker image
       uses: docker/build-push-action@v5
       with:
@@ -42,15 +43,16 @@ jobs:
         tags: |
           ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-    
+
     - name: Azure Login
       uses: azure/login@v1
       with:
-        client-id: ${{ secrets.SWIFTCHECKAPI_AZURE_CLIENT_ID }}
-        tenant-id: ${{ secrets.SWIFTCHECKAPI_AZURE_TENANT_ID }}
+        client-id:       ${{ secrets.SWIFTCHECKAPI_AZURE_CLIENT_ID }}
+        tenant-id:       ${{ secrets.SWIFTCHECKAPI_AZURE_TENANT_ID }}
         subscription-id: ${{ secrets.SWIFTCHECKAPI_AZURE_SUBSCRIPTION_ID }}
-    
+
     - name: Update Azure Container App
+      shell: bash
       run: |
         az containerapp update \
           --name ${{ env.CONTAINER_APP_NAME }} \
@@ -61,26 +63,26 @@ jobs:
       run: |
         echo "✅ Deployment successful!"
         echo "🚀 Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
-        echo "📱 URL: https://swiftcheck-api.agreeabletree-bb0198f9.uaenorth.azurecontainerapps.io"
+        echo "🌐 URL:  https://swiftcheck-api.agreeabletree-bb0198f9.uaenorth.azurecontainerapps.io"
 
-  # Cleanup job that runs after successful deployment
+  # ──────────────────────────────────────────────────────────────────────────
   cleanup-acr:
     needs: build-and-push
     runs-on: ubuntu-latest
-    if: success()  # Only run if deployment was successful
+    if: success()
     permissions:
-      id-token: write  # Required for Azure OIDC authentication
-    
+      id-token: write
+
     steps:
-    # Azure authentication for ACR operations
+    # FIXED: Proper Azure authentication for ACR operations
     - name: Azure Login
       uses: azure/login@v1
       with:
-        client-id: ${{ secrets.SWIFTCHECKAPI_AZURE_CLIENT_ID }}
-        tenant-id: ${{ secrets.SWIFTCHECKAPI_AZURE_TENANT_ID }}
+        client-id:       ${{ secrets.SWIFTCHECKAPI_AZURE_CLIENT_ID }}
+        tenant-id:       ${{ secrets.SWIFTCHECKAPI_AZURE_TENANT_ID }}
         subscription-id: ${{ secrets.SWIFTCHECKAPI_AZURE_SUBSCRIPTION_ID }}
 
-    # Verify Azure authentication and subscription
+    # FIXED: Verify Azure authentication and subscription
     - name: Verify Azure connection and find ACR
       run: |
         echo "🔍 Verifying Azure authentication..."
@@ -106,7 +108,7 @@ jobs:
           echo "$acr_info" | jq -r '.[0] | "ResourceGroup: \(.resourceGroup), LoginServer: \(.loginServer)"'
         fi
 
-    # Use Docker login with registry credentials for ACR operations
+    # FIXED: Use Docker login with registry credentials for ACR operations
     - name: Log in to Azure Container Registry using Docker
       uses: azure/docker-login@v1
       with:
@@ -114,7 +116,7 @@ jobs:
         username: ${{ secrets.SWIFTCHECKAPI_REGISTRY_USERNAME }}
         password: ${{ secrets.SWIFTCHECKAPI_REGISTRY_PASSWORD }}
 
-    # Verify ACR access using registry credentials
+    # FIXED: Skip az acr login if it's causing issues, use registry credentials instead
     - name: Verify ACR access using registry credentials
       run: |
         echo "🔐 Testing ACR access using registry credentials..."
@@ -136,36 +138,16 @@ jobs:
 
     - name: Get current image tags
       id: get-tags
+      shell: bash
       run: |
         echo "🔍 Getting tags for ${{ env.IMAGE_NAME }}..."
         
-        # Use REST API with registry credentials as primary method
+        # FIXED: Use REST API with registry credentials as primary method
         echo "🔄 Using REST API to get tags..."
-        if tag_response=$(curl -s -u "${{ secrets.SWIFTCHECKAPI_REGISTRY_USERNAME }}:${{ secrets.SWIFTCHECKAPI_REGISTRY_PASSWORD }}" \
-                         "https://${{ env.REGISTRY }}/v2/${{ env.IMAGE_NAME }}/tags/list"); then
-          
-          # Check if response is valid JSON
-          if echo "$tag_response" | jq empty 2>/dev/null; then
-            # Extract and sort tags, keeping 'latest' first if it exists
-            all_tags=$(echo "$tag_response" | jq -r '.tags[]?' 2>/dev/null || echo "")
-            
-            if [ -n "$all_tags" ]; then
-              # Create JSON array with proper ordering: latest first, then by creation time (newest first)
-              tags=$(echo "$all_tags" | grep -v '^latest$' | sort -r | jq -R . | jq -s .)
-              
-              # Add 'latest' at the beginning if it exists
-              if echo "$all_tags" | grep -q '^latest$'; then
-                tags=$(echo '["latest"]' "$tags" | jq -s 'add')
-              fi
-            else
-              tags="[]"
-            fi
-            
-            echo "✅ Successfully retrieved tags using REST API"
-          else
-            echo "❌ Invalid JSON response from REST API"
-            tags="[]"
-          fi
+        if tags=$(curl -s -u "${{ secrets.SWIFTCHECKAPI_REGISTRY_USERNAME }}:${{ secrets.SWIFTCHECKAPI_REGISTRY_PASSWORD }}" \
+                   "https://${{ env.REGISTRY }}/v2/${{ env.IMAGE_NAME }}/tags/list" | \
+                   jq -r '.tags // []' | jq -s 'sort_by(.) | reverse'); then
+          echo "✅ Successfully retrieved tags using REST API"
         else
           echo "❌ REST API failed, trying Azure CLI..."
           # Fallback to Azure CLI
@@ -177,25 +159,18 @@ jobs:
           fi
         fi
         
-        # Final validation that tags is valid JSON
-        if ! echo "$tags" | jq empty 2>/dev/null; then
-          echo "⚠️ Invalid JSON in tags, resetting to empty array"
-          tags="[]"
-        fi
-        
-        echo "tags=$tags" >> "$GITHUB_OUTPUT"
+        echo "tags=$tags" >> $GITHUB_OUTPUT
         tag_count=$(echo "$tags" | jq length)
         echo "📊 Found $tag_count total tags"
         
         # Debug: Show the tags
         echo "🏷️ Current tags:"
-        if [ "$tag_count" -gt 0 ]; then
-          echo "$tags" | jq -r '.[]'
-        else
-          echo "No tags found"
-        fi
+        echo "$tags" | jq -r '.[]' 2>/dev/null || echo "No tags found or invalid JSON"
 
     - name: Clean up old image tags
+      shell: bash
+      env:
+        TAGS: "${{ steps.get-tags.outputs.tags }}"
       run: |
         tags='${{ steps.get-tags.outputs.tags }}'
         tag_count=$(echo "$tags" | jq length)
@@ -210,7 +185,7 @@ jobs:
             if [ -n "$tag" ] && [ "$tag" != "null" ]; then
               echo "🗑️ Deleting image tag: $tag"
               
-              # Use REST API for deletion as primary method
+              # FIXED: Use REST API for deletion as primary method
               if curl -s -X DELETE -u "${{ secrets.SWIFTCHECKAPI_REGISTRY_USERNAME }}:${{ secrets.SWIFTCHECKAPI_REGISTRY_PASSWORD }}" \
                       "https://${{ env.REGISTRY }}/v2/${{ env.IMAGE_NAME }}/manifests/$tag" | grep -q "202\|404"; then
                 echo "✅ Deleted tag: $tag"
@@ -232,10 +207,11 @@ jobs:
         fi
 
     - name: Clean up untagged images
+      shell: bash
       run: |
         echo "🧹 Cleaning up untagged/dangling images..."
         
-        # Add error handling for untagged image cleanup
+        # FIXED: Add error handling for untagged image cleanup
         if untagged_manifests=$(az acr repository show-manifests --name ${{ env.ACR_NAME }} --repository ${{ env.IMAGE_NAME }} --query "[?tags[0]==null].digest" -o tsv 2>/dev/null); then
           if [ -n "$untagged_manifests" ]; then
             echo "$untagged_manifests" | while read -r digest; do
@@ -253,10 +229,11 @@ jobs:
         fi
 
     - name: Clean up old Container App revisions
+      shell: bash
       run: |
         echo "🧹 Cleaning up old Container App revisions..."
         
-        # Add error handling for revision cleanup
+        # FIXED: Add error handling for revision cleanup
         if revisions=$(az containerapp revision list --name ${{ env.CONTAINER_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query '[].name' -o json 2>/dev/null); then
           revision_count=$(echo "$revisions" | jq length)
           
