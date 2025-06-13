@@ -10,6 +10,8 @@ env:
   IMAGE_NAME: swiftcheck-api
   CONTAINER_APP_NAME: swiftcheck-api
   RESOURCE_GROUP: SwiftCheckAi
+  ACR_NAME: swiftcheckacr
+  IMAGES_TO_KEEP: 2
 
 jobs:
   build-and-push:
@@ -60,3 +62,107 @@ jobs:
         echo "✅ Deployment successful!"
         echo "🚀 Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
         echo "📱 URL: https://swiftcheck-api.agreeabletree-bb0198f9.uaenorth.azurecontainerapps.io"
+
+  # NEW: Cleanup job that runs after successful deployment
+  cleanup-acr:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: success()  # Only run if deployment was successful
+    
+    steps:
+    - name: Log in to Azure Container Registry
+      uses: azure/docker-login@v1
+      with:
+        login-server: ${{ env.REGISTRY }}
+        username: ${{ secrets.SWIFTCHECKAPI_REGISTRY_USERNAME }}
+        password: ${{ secrets.SWIFTCHECKAPI_REGISTRY_PASSWORD }}
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        client-id: ${{ secrets.SWIFTCHECKAPI_AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.SWIFTCHECKAPI_AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.SWIFTCHECKAPI_AZURE_SUBSCRIPTION_ID }}
+
+    - name: Get current image tags
+      id: get-tags
+      run: |
+        echo "🔍 Getting tags for ${{ env.IMAGE_NAME }}..."
+        tags=$(az acr repository show-tags --name ${{ env.ACR_NAME }} --repository ${{ env.IMAGE_NAME }} --orderby time_desc --output json)
+        echo "tags=$tags" >> $GITHUB_OUTPUT
+        tag_count=$(echo $tags | jq length)
+        echo "📊 Found $tag_count total tags"
+
+    - name: Clean up old image tags
+      run: |
+        tags='${{ steps.get-tags.outputs.tags }}'
+        tag_count=$(echo $tags | jq length)
+        
+        if [ $tag_count -gt ${{ env.IMAGES_TO_KEEP }} ]; then
+          echo "🧹 Found $tag_count tags, keeping ${{ env.IMAGES_TO_KEEP }}, deleting $((tag_count - ${{ env.IMAGES_TO_KEEP }}))"
+          
+          # Get tags to delete (skip the first N to keep)
+          tags_to_delete=$(echo $tags | jq -r '.[${{ env.IMAGES_TO_KEEP }}:][]')
+          
+          for tag in $tags_to_delete; do
+            echo "🗑️ Deleting image tag: $tag"
+            az acr repository delete --name ${{ env.ACR_NAME }} --image "${{ env.IMAGE_NAME }}:$tag" --yes
+          done
+          
+          echo "✅ Deleted $((tag_count - ${{ env.IMAGES_TO_KEEP }})) old image tags"
+        else
+          echo "ℹ️ Only $tag_count tags found, no cleanup needed"
+        fi
+
+    - name: Clean up untagged images
+      run: |
+        echo "🧹 Cleaning up untagged/dangling images..."
+        untagged_manifests=$(az acr repository show-manifests --name ${{ env.ACR_NAME }} --repository ${{ env.IMAGE_NAME }} --query "[?tags[0]==null].digest" -o tsv)
+        
+        if [ -n "$untagged_manifests" ]; then
+          echo "$untagged_manifests" | while read -r digest; do
+            echo "🗑️ Deleting untagged manifest: $digest"
+            az acr repository delete --name ${{ env.ACR_NAME }} --image "${{ env.IMAGE_NAME }}@$digest" --yes
+          done
+          echo "✅ Cleaned up untagged images"
+        else
+          echo "ℹ️ No untagged images found"
+        fi
+
+    - name: Clean up old Container App revisions
+      run: |
+        echo "🧹 Cleaning up old Container App revisions..."
+        revisions=$(az containerapp revision list --name ${{ env.CONTAINER_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query '[].name' -o json)
+        revision_count=$(echo $revisions | jq length)
+        
+        if [ $revision_count -gt ${{ env.IMAGES_TO_KEEP }} ]; then
+          echo "📊 Found $revision_count revisions, keeping ${{ env.IMAGES_TO_KEEP }}, deactivating $((revision_count - ${{ env.IMAGES_TO_KEEP }}))"
+          
+          # Get revisions to deactivate (skip the first N to keep)
+          revisions_to_deactivate=$(echo $revisions | jq -r '.[${{ env.IMAGES_TO_KEEP }}:][]')
+          
+          for revision in $revisions_to_deactivate; do
+            echo "🗑️ Deactivating revision: $revision"
+            az containerapp revision deactivate --name ${{ env.CONTAINER_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --revision $revision || true
+          done
+          
+          echo "✅ Deactivated $((revision_count - ${{ env.IMAGES_TO_KEEP }})) old revisions"
+        else
+          echo "ℹ️ Only $revision_count revisions found, no cleanup needed"
+        fi
+
+    - name: Show final cleanup summary
+      run: |
+        echo "📊 === CLEANUP SUMMARY ==="
+        az acr repository show --name ${{ env.ACR_NAME }} --repository ${{ env.IMAGE_NAME }}
+        
+        echo ""
+        echo "📋 Remaining image tags:"
+        az acr repository show-tags --name ${{ env.ACR_NAME }} --repository ${{ env.IMAGE_NAME }} --orderby time_desc
+        
+        echo ""
+        echo "🔄 Active Container App revisions:"
+        az containerapp revision list --name ${{ env.CONTAINER_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query '[].{Name:name,CreatedTime:properties.createdTime,Active:properties.active}' -o table
+        
+        echo ""
+        echo "💾 Storage cleanup complete! 🎉"

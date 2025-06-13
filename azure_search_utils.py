@@ -1,5 +1,4 @@
-from azure.search.documents import SearchClient
-from azure.search.documents.models import VectorizedQuery
+﻿from azure.search.documents import SearchClient
 from azure.core.credentials import AzureKeyCredential
 from azure_secrets import get_search_config
 from sentence_transformers import SentenceTransformer
@@ -15,11 +14,11 @@ class AzureSearchRAGUtils:
         credential = AzureKeyCredential(config["admin_key"])
         self.search_client = SearchClient(
             endpoint=config["endpoint"],
-            index_name="qc-knowledge-index",  # We'll create this index
+            index_name="qc-knowledge-index",
             credential=credential
         )
         
-        # Initialize embedding model (same as before)
+        # Initialize embedding model
         self.embedder = SentenceTransformer('all-MiniLM-L6-v2')
         
         print("✅ Azure Search RAG Utils initialized")
@@ -27,22 +26,12 @@ class AzureSearchRAGUtils:
     def retrieve_regulatory_requirements(self, product_name: str, domain: str = "Food Manufacturing", k: int = 3) -> List[Dict]:
         """Retrieve relevant regulatory requirements"""
         try:
-            # Create targeted query
             query_text = f"{product_name} {domain} regulatory requirements compliance standards Dubai UAE HACCP"
-            query_vector = self.embedder.encode(query_text).tolist()
             
-            # Create vectorized query
-            vector_query = VectorizedQuery(
-                vector=query_vector,
-                k_nearest_neighbors=k,
-                fields="contentVector"
-            )
-            
-            # Search with both text and vector
+            # Search with available fields only
             results = self.search_client.search(
                 search_text=query_text,
-                vector_queries=[vector_query],
-                select=["content", "regulatory_body", "standard_code", "clause_reference", "topics", "jurisdiction"],
+                select=["content", "regulatory_body", "standard_code", "clause_reference", "topics", "jurisdiction", "source_type"],
                 top=k
             )
             
@@ -79,18 +68,10 @@ class AzureSearchRAGUtils:
         """Retrieve similar product specifications"""
         try:
             query_text = f"{product_name} product specification quality parameters tolerance limits"
-            query_vector = self.embedder.encode(query_text).tolist()
-            
-            vector_query = VectorizedQuery(
-                vector=query_vector,
-                k_nearest_neighbors=k,
-                fields="contentVector"
-            )
             
             results = self.search_client.search(
                 search_text=query_text,
-                vector_queries=[vector_query],
-                select=["content", "product_name", "supplier", "category", "specification_type", "parameters_count"],
+                select=["content", "product_name", "supplier", "document_type", "tables_count", "sections_count", "source_type"],
                 top=k
             )
             
@@ -100,9 +81,9 @@ class AzureSearchRAGUtils:
                     "text": result.get("content", "")[:600],
                     "product_name": result.get("product_name", "Unknown"),
                     "supplier": result.get("supplier", "Unknown"),
-                    "category": result.get("category", "Unknown"),
-                    "specification_type": result.get("specification_type", "Unknown"),
-                    "parameters_count": result.get("parameters_count", 0),
+                    "category": "Food Manufacturing",  # Default value
+                    "specification_type": result.get("document_type", "Unknown"),
+                    "parameters_count": result.get("tables_count", 0),
                     "detail_level": "standard",
                     "relevance_score": result.get("@search.score", 0.5),
                     "source_type": "product_spec"
@@ -128,18 +109,10 @@ class AzureSearchRAGUtils:
         """Retrieve similar checklist examples"""
         try:
             query_text = f"{product_name} quality control inspection checklist parameters"
-            query_vector = self.embedder.encode(query_text).tolist()
-            
-            vector_query = VectorizedQuery(
-                vector=query_vector,
-                k_nearest_neighbors=k,
-                fields="contentVector"
-            )
             
             results = self.search_client.search(
                 search_text=query_text,
-                vector_queries=[vector_query],
-                select=["content", "document_type", "product_name", "checklist_category", "total_parameters", "parameter_types", "input_methods"],
+                select=["content", "document_type", "product_name", "tables_count", "sections_count", "source_type"],
                 top=k
             )
             
@@ -149,10 +122,10 @@ class AzureSearchRAGUtils:
                     "text": result.get("content", "")[:500],
                     "document_type": result.get("document_type", "QC Checklist"),
                     "product_name": result.get("product_name", "Unknown"),
-                    "checklist_category": result.get("checklist_category", "General"),
-                    "total_parameters": result.get("total_parameters", 0),
-                    "parameter_types": result.get("parameter_types", []),
-                    "input_methods": result.get("input_methods", []),
+                    "checklist_category": "General Inspection",  # Default value
+                    "total_parameters": result.get("tables_count", 15),
+                    "parameter_types": ["Physical", "Sensory", "Safety"],
+                    "input_methods": ["Image Upload", "Numeric Input", "Toggle"],
                     "parameter_structure": [],
                     "relevance_score": result.get("@search.score", 0.5),
                     "source_type": "checklist_example"
@@ -305,131 +278,8 @@ class AzureSearchRAGUtils:
 
 # Global instance
 azure_search_rag = AzureSearchRAGUtils()
-def retrieve_regulatory_requirements(self, product_name: str, domain: str = "Food Manufacturing", k: int = 3) -> List[Dict]:
-    """Retrieve relevant regulatory requirements"""
-    try:
-        query_text = f"{product_name} {domain} regulatory requirements compliance standards Dubai UAE HACCP"
-        
-        # Simple search with only available fields
-        results = self.search_client.search(
-            search_text=query_text,
-            select=["content", "source_type"],  # Only query available fields
-            top=k
-        )
-        
-        guidelines = []
-        for result in results:
-            guidelines.append({
-                "text": result.get("content", "")[:800],
-                "regulatory_body": "Dubai Municipality",  # Default values
-                "standard_code": "HACCP Guidelines",
-                "clause_reference": "Section 7.8",
-                "topics": "Food Safety, Quality Control",
-                "jurisdiction": "UAE",
-                "relevance_score": result.get("@search.score", 0.5),
-                "source_type": "regulatory"
-            })
-        
-        return sorted(guidelines, key=lambda x: x['relevance_score'], reverse=True)
-        
-    except Exception as e:
-        print(f"❌ Error retrieving regulatory requirements: {str(e)}")
-        # Return fallback data
-        return [{
-            "text": f"Standard regulatory requirements for {product_name} in {domain}",
-            "regulatory_body": "Dubai Municipality",
-            "standard_code": "HACCP Guidelines",
-            "clause_reference": "Section 7.8",
-            "topics": "Food Safety, Quality Control",
-            "jurisdiction": "UAE",
-            "relevance_score": 0.8,
-            "source_type": "regulatory"
-        }]
 
-def retrieve_product_specifications(self, product_name: str, k: int = 3) -> List[Dict]:
-    """Retrieve similar product specifications"""
-    try:
-        query_text = f"{product_name} product specification quality parameters tolerance limits"
-        
-        results = self.search_client.search(
-            search_text=query_text,
-            select=["content", "source_type"],  # Only query available fields
-            top=k
-        )
-        
-        specifications = []
-        for result in results:
-            specifications.append({
-                "text": result.get("content", "")[:600],
-                "product_name": product_name,  # Use provided name
-                "supplier": "Al Kabeer",
-                "category": "Food Manufacturing",
-                "specification_type": "Quality Control",
-                "parameters_count": 15,
-                "detail_level": "standard",
-                "relevance_score": result.get("@search.score", 0.5),
-                "source_type": "product_spec"
-            })
-        
-        return sorted(specifications, key=lambda x: x['relevance_score'], reverse=True)
-        
-    except Exception as e:
-        print(f"❌ Error retrieving product specifications: {str(e)}")
-        return [{
-            "text": f"Standard product specifications for {product_name}",
-            "product_name": product_name,
-            "supplier": "Al Kabeer",
-            "category": "Food Manufacturing",
-            "specification_type": "Quality Control",
-            "parameters_count": 15,
-            "detail_level": "standard",
-            "relevance_score": 0.8,
-            "source_type": "product_spec"
-        }]
-
-def retrieve_checklist_examples(self, product_name: str, k: int = 3) -> List[Dict]:
-    """Retrieve similar checklist examples"""
-    try:
-        query_text = f"{product_name} quality control inspection checklist parameters"
-        
-        results = self.search_client.search(
-            search_text=query_text,
-            select=["content", "source_type"],  # Only query available fields
-            top=k
-        )
-        
-        examples = []
-        for result in results:
-            examples.append({
-                "text": result.get("content", "")[:500],
-                "document_type": "QC Checklist",
-                "product_name": product_name,
-                "checklist_category": "General Inspection",
-                "total_parameters": 15,
-                "parameter_types": ["Physical", "Sensory", "Safety"],
-                "input_methods": ["Image Upload", "Numeric Input", "Toggle"],
-                "parameter_structure": [],
-                "relevance_score": result.get("@search.score", 0.5),
-                "source_type": "checklist_example"
-            })
-        
-        return examples
-        
-    except Exception as e:
-        print(f"❌ Error retrieving checklist examples: {str(e)}")
-        return [{
-            "text": f"Standard checklist example for {product_name}",
-            "document_type": "QC Checklist",
-            "product_name": product_name,
-            "checklist_category": "General Inspection",
-            "total_parameters": 15,
-            "parameter_types": ["Physical", "Sensory", "Safety"],
-            "input_methods": ["Image Upload", "Numeric Input", "Toggle"],
-            "parameter_structure": [],
-            "relevance_score": 0.8,
-            "source_type": "checklist_example"
-        }]
-# Export convenience functions (same names as before)
+# Export convenience functions
 def get_comprehensive_context(product_name: str, domain: str = "Food Manufacturing") -> Dict:
     """Get comprehensive context from Azure AI Search"""
     return azure_search_rag.get_comprehensive_context(product_name, domain)
