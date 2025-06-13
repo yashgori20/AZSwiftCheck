@@ -309,4 +309,4 @@ jobs:
         az containerapp revision list --name ${{ env.CONTAINER_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query '[].{Name:name,CreatedTime:properties.createdTime,Active:properties.active}' -o table 2>/dev/null || echo "⚠️ Could not retrieve revision info"
         
         echo ""
-        echo "💾 Storage cleanup complete! 🎉"s
+        echo "💾 Storage cleanup complete! 🎉"

@@ -1167,7 +1167,7 @@ def index():
 @rate_limit("/refine")
 @audit_log("CREATE", "TEMPLATE", lambda result, *args, **kwargs: result.json.get('request_id') if hasattr(result, 'json') else 'unknown')
 def refine_parameters():
-    """refine endpoint with comprehensive RAG and intelligent parameter generation - Enhanced tracking"""
+    """refine endpoint with comprehensive RAG, intelligent parameter generation, and Event Grid notifications"""
     global global_parameters
     global global_json_template
 
@@ -1207,35 +1207,12 @@ def refine_parameters():
             if extracted_text:
                 file_context = f"\n\nReference document content ({filename}):\n{extracted_text}"
                 print(f"✅ OCR extracted {len(extracted_text)} characters from {filename}")
-                
-                # Track OCR processing
-                azure_monitoring.track_performance(
-                    operation="ocr_processing",
-                    duration_ms=0,  # Could track OCR time separately
-                    metadata={
-                        "filename": filename,
-                        "file_ext": file_ext,
-                        "text_length": len(extracted_text)
-                    }
-                )
             else:
                 file_context = f"\n\n[Failed to extract text from {filename}]"
-                
-                # Track OCR failure
-                azure_monitoring.track_error(
-                    endpoint="/refine",
-                    error_type="OCRProcessingError",
-                    error_message=f"Failed to extract text from {filename}"
-                )
                 
     else:
         data = request.get_json()
         if not data:
-            azure_monitoring.track_error(
-                endpoint="/refine",
-                error_type="ValidationError", 
-                error_message="No JSON payload found"
-            )
             return jsonify({"error": "No JSON payload found"}), 400
         file_context = ""
 
@@ -1245,25 +1222,10 @@ def refine_parameters():
     supplier_name = data.get("supplier_name", "")
     
     if not doc_type:
-        azure_monitoring.track_error(
-            endpoint="/refine",
-            error_type="ValidationError",
-            error_message="doc_type is required"
-        )
         return jsonify({"error": "doc_type is required"}), 400
     if not product_name:
-        azure_monitoring.track_error(
-            endpoint="/refine", 
-            error_type="ValidationError",
-            error_message="product_name is required"
-        )
         return jsonify({"error": "product_name is required"}), 400
     if not supplier_name:
-        azure_monitoring.track_error(
-            endpoint="/refine",
-            error_type="ValidationError", 
-            error_message="supplier_name is required"
-        )
         return jsonify({"error": "supplier_name is required"}), 400
     
     # Use default prompt if none provided
@@ -1324,27 +1286,18 @@ def refine_parameters():
         # Calculate processing time
         processing_time_ms = (time.time() - request_start_time) * 1000
         
-        # Enhanced Application Insights tracking
-        azure_monitoring.track_template_generation(
-            product_name=product_name,
-            parameter_count=len(updated_params),
-            tenant_id="default"
-        )
-        
-        # Track successful request performance
-        azure_monitoring.track_performance(
-            operation="template_generation_complete",
-            duration_ms=processing_time_ms,
-            metadata={
-                "product_name": product_name,
-                "doc_type": doc_type,
-                "supplier_name": supplier_name,
-                "parameter_count": len(updated_params),
-                "request_id": request_id,
-                "has_file_context": bool(file_context),
-                "comprehensive_coverage": len(updated_params) >= 15
-            }
-        )
+        # 🚀 NEW: Send Event Grid notification for template generation
+        try:
+            from event_grid_integration import working_event_handler
+            event_sent = working_event_handler.send_template_generated_event(
+                request_id=request_id,
+                product_name=product_name,
+                parameters_count=len(updated_params)
+            )
+            print(f"📢 Event Grid notification sent: {event_sent}")
+        except Exception as event_error:
+            print(f"⚠️ Event Grid notification failed: {event_error}")
+            event_sent = False
         
         response_data = {
             "success": True, 
@@ -1353,30 +1306,18 @@ def refine_parameters():
             "summary": summary_text,
             "parameters_count": len(updated_params),
             "processing_time_ms": round(processing_time_ms, 2),
+            "event_notification_sent": event_sent,  # 🚀 NEW: Event Grid status
             "enhancements": {
                 "comprehensive_rag": True,
                 "regulatory_compliance": True,
                 "intelligent_types": True,
-                "minimum_15_params": len(updated_params) >= 15
+                "minimum_15_params": len(updated_params) >= 15,
+                "event_grid_integrated": True  # 🚀 NEW: Event Grid integration flag
             }
         }
         
         if file_context:
             response_data["file_info"] = f"OCR processed {filename}" if 'filename' in locals() else "File processed with OCR"
-        
-        # Log successful completion
-        azure_monitoring.logger.info(
-            "Template generation completed successfully",
-            extra={
-                'custom_dimensions': {
-                    'request_id': request_id,
-                    'product_name': product_name,
-                    'parameter_count': len(updated_params),
-                    'processing_time_ms': processing_time_ms,
-                    'success': True
-                }
-            }
-        )
             
         return jsonify(response_data)
         
@@ -1386,39 +1327,30 @@ def refine_parameters():
         
         print(f"❌ Error in /refine: {error_message}")
         
-        # Enhanced error tracking
-        azure_monitoring.track_error(
-            endpoint="/refine",
-            error_type=type(e).__name__,
-            error_message=error_message
-        )
-        
-        # Track failed request performance
-        azure_monitoring.track_performance(
-            operation="template_generation_failed",
-            duration_ms=processing_time_ms,
-            metadata={
-                "product_name": product_name if 'product_name' in locals() else "unknown",
-                "error_type": type(e).__name__,
-                "error_message": error_message[:100]
-            }
-        )
-        
-        # Log error details
-        azure_monitoring.logger.error(
-            "Template generation failed",
-            extra={
-                'custom_dimensions': {
-                    'product_name': product_name if 'product_name' in locals() else "unknown",
-                    'error_type': type(e).__name__,
-                    'error_message': error_message,
-                    'processing_time_ms': processing_time_ms,
-                    'success': False
+        # 🚀 NEW: Send Event Grid error notification
+        try:
+            from event_grid_integration import working_event_handler
+            working_event_handler.send_error_event(
+                endpoint="/refine",
+                error_type=type(e).__name__,
+                error_message=error_message,
+                context={
+                    "product_name": product_name if 'product_name' in locals() else "unknown",
+                    "processing_time_ms": processing_time_ms
                 }
-            }
-        )
+            )
+        except Exception as event_error:
+            print(f"⚠️ Error event notification failed: {event_error}")
         
-        return jsonify({"error": error_message}), 500
+        return jsonify({
+            "error": error_message,
+            "processing_time_ms": round(processing_time_ms, 2),
+            "event_notification_attempted": True
+        }), 500
+
+
+
+
 @app.route("/edit", methods=["POST"])
 @rate_limit("/edit")
 @audit_log("UPDATE", "TEMPLATE", lambda result, *args, **kwargs: result.json.get('request_id') if hasattr(result, 'json') else 'unknown')
@@ -2598,7 +2530,7 @@ def trigger_background_processing(blob_url, container_name, blob_name, request_i
         print(f"❌ Error in background processing trigger: {e}")
         return False
     
-    
+
 @app.route("/audit/trail", methods=["GET"])
 def get_audit_trail():
     """Get audit trail"""
