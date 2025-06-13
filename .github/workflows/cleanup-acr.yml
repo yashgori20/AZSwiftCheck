@@ -1,96 +1,23 @@
-name: Cleanup ACR Images
+name: Purge old images
 
 on:
-  # Manual trigger
-  workflow_dispatch:
-  
-  # Run on a schedule (daily at 2 AM UTC)
   schedule:
-    - cron: '0 2 * * *'
-  
-  # Also run after pushes to main (same as deployment)
-  push:
-    branches: [ main ]
+    - cron: '0 2 * * *'     # 07 :30 IST every day
+  workflow_dispatch:
 
 env:
-  REGISTRY: swiftcheckacr.azurecr.io
-  IMAGE_NAME: swiftcheck-api
-  ACR_NAME: swiftcheckacr
+  REGISTRY: swiftcheckacr
 
 jobs:
-  cleanup:
+  purge:
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-
     steps:
-    - name: Azure Login
-      uses: azure/login@v1
-      with:
-        client-id: ${{ secrets.SWIFTCHECKAPI_AZURE_CLIENT_ID }}
-        tenant-id: ${{ secrets.SWIFTCHECKAPI_AZURE_TENANT_ID }}
-        subscription-id: ${{ secrets.SWIFTCHECKAPI_AZURE_SUBSCRIPTION_ID }}
-
-    - name: Log in to Azure Container Registry
-      uses: azure/docker-login@v1
-      with:
-        login-server: ${{ env.REGISTRY }}
-        username: ${{ secrets.SWIFTCHECKAPI_REGISTRY_USERNAME }}
-        password: ${{ secrets.SWIFTCHECKAPI_REGISTRY_PASSWORD }}
-
-    - name: Clean up old ACR images
-      run: |
-        echo "🧹 Starting ACR cleanup process..."
-        
-        # Get all tags ordered by creation time (newest first), excluding 'latest'
-        tags=$(az acr repository show-tags \
-          --name ${{ env.ACR_NAME }} \
-          --repository ${{ env.IMAGE_NAME }} \
-          --orderby time_desc \
-          --output tsv \
-          --query "[?name!='latest'].name")
-        
-        # Convert to array
-        tag_array=($tags)
-        tag_count=${#tag_array[@]}
-        
-        echo "Found $tag_count tags (excluding 'latest')"
-        
-        if [ $tag_count -gt 2 ]; then
-          tags_to_delete=${tag_array[@]:2}
-          delete_count=$((tag_count - 2))
-          
-          echo "Will delete $delete_count old tags"
-          
-          for tag in $tags_to_delete; do
-            echo "Deleting tag: $tag"
-            az acr repository delete \
-              --name ${{ env.ACR_NAME }} \
-              --image "${{ env.IMAGE_NAME }}:$tag" \
-              --yes
-          done
-          
-          echo "✅ Cleanup completed - deleted $delete_count old images"
-        else
-          echo "Only $tag_count tags found, no cleanup needed"
-        fi
-
-    - name: Check repository size
-      run: |
-        echo "📊 Repository information after cleanup:"
-        az acr repository show \
-          --name ${{ env.ACR_NAME }} \
-          --repository ${{ env.IMAGE_NAME }} \
-          --output table
-        
-        echo "📋 Remaining tags:"
-        az acr repository show-tags \
-          --name ${{ env.ACR_NAME }} \
-          --repository ${{ env.IMAGE_NAME }} \
-          --output table
-
-    - name: Notify cleanup complete
-      run: |
-        echo "🧹 ACR cleanup completed successfully!"
-        echo "📦 Registry: ${{ env.REGISTRY }}"
-        echo "🏷️  Repository: ${{ env.IMAGE_NAME }}"
+      - uses: azure/login@v1          # ${{ secrets.AZURE_CREDENTIALS }}
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      - uses: azure/CLI@v1
+        with:
+          inlineScript: |
+            az acr run --registry $REGISTRY \
+              --cmd "acr purge --filter 'swiftcheck-api:.*' --keep 2 --ago 0d" \
+              /dev/null

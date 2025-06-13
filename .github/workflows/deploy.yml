@@ -54,6 +54,14 @@ jobs:
           --name ${{ env.CONTAINER_APP_NAME }} \
           --resource-group ${{ env.RESOURCE_GROUP }} \
           --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        
+    - name: Clean up old ACR tags (keep 2)
+      uses: azure/CLI@v1
+      with:
+        inlineScript: |
+          PURGE_CMD="acr purge --filter 'swiftcheck-api:.*' --keep 2 --ago 0d"
+          az acr run --registry $REGISTRY --cmd "$PURGE_CMD" /dev/null
+
 
     - name: Notify deployment complete
       run: |
