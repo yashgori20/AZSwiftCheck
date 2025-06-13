@@ -1,18 +1,16 @@
 name: Cleanup ACR Images
 
 on:
-  # Run after successful deployment
-  workflow_run:
-    workflows: ["Deploy Swift Check AI"]
-    types:
-      - completed
-  
-  # Allow manual trigger
+  # Manual trigger
   workflow_dispatch:
   
-  # Optional: Run on a schedule (e.g., daily at 2 AM UTC)
+  # Run on a schedule (daily at 2 AM UTC)
   schedule:
     - cron: '0 2 * * *'
+  
+  # Also run after pushes to main (same as deployment)
+  push:
+    branches: [ main ]
 
 env:
   REGISTRY: swiftcheckacr.azurecr.io
@@ -22,8 +20,6 @@ env:
 jobs:
   cleanup:
     runs-on: ubuntu-latest
-    # Only run if the deployment workflow succeeded
-    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
     permissions:
       id-token: write
 
