@@ -63,11 +63,13 @@ jobs:
         echo "🚀 Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
         echo "📱 URL: https://swiftcheck-api.agreeabletree-bb0198f9.uaenorth.azurecontainerapps.io"
 
-  # NEW: Cleanup job that runs after successful deployment
+  # Cleanup job that runs after successful deployment
   cleanup-acr:
     needs: build-and-push
     runs-on: ubuntu-latest
     if: success()  # Only run if deployment was successful
+    permissions:
+      id-token: write  # ADDED: Required for Azure OIDC authentication
     
     steps:
     - name: Log in to Azure Container Registry

@@ -22,52 +22,68 @@ class AzureOpenAIManager:
         self.deployment_name = "gpt-4o"
         print(f"🔍 DEBUG: Using deployment: {self.deployment_name}")
         
-    def call_openai_llm(self, user_message, doc_type, product_name, supplier_name, 
-                       existing_parameters=None, is_digitization=False):
-        """
-        Azure OpenAI call with Redis caching support.
-        """
+def call_openai_llm(self, user_message, doc_type, product_name, supplier_name, 
+                   existing_parameters=None, is_digitization=False):
+    """
+    Azure OpenAI call with Redis caching support and enhanced Application Insights tracking.
+    """
+    import time
+    
+    start_time = time.time()
+    cached_response = None
+    
+    # Check cache first
+    cached_response = azure_cache.get_cached_response(
+        user_message, doc_type, product_name, supplier_name
+    )
+    
+    if cached_response:
+        duration_ms = (time.time() - start_time) * 1000
         
-        # Check cache first
-        cached_response = azure_cache.get_cached_response(
-            user_message, doc_type, product_name, supplier_name
+        # Track cached response
+        from azure_monitoring import azure_monitoring
+        azure_monitoring.track_llm_call(
+            model=self.deployment_name,
+            product_name=product_name,
+            response_length=len(cached_response),
+            duration_ms=duration_ms,
+            cache_hit=True
         )
         
-        if cached_response:
-            return cached_response
-        
-        # Import here to avoid circular imports
-        from azure_search_utils import get_comprehensive_context, format_context_for_prompt
-        
-        domain = "Food Manufacturing"
+        return cached_response
+    
+    # Import here to avoid circular imports
+    from azure_search_utils import get_comprehensive_context, format_context_for_prompt
+    
+    domain = "Food Manufacturing"
 
-        # Get comprehensive context from Azure AI Search
-        print(f"🔍 Retrieving comprehensive context for: {product_name}")
-        try:
-            comprehensive_context = get_comprehensive_context(product_name, domain)
-            formatted_context = format_context_for_prompt(comprehensive_context, max_length=4500)
-        except Exception as e:
-            print(f"⚠️ RAG context error: {e}")
-            formatted_context = f"Context retrieval temporarily unavailable. Generate comprehensive QC parameters for {product_name}."
+    # Get comprehensive context from Azure AI Search
+    print(f"🔍 Retrieving comprehensive context for: {product_name}")
+    try:
+        comprehensive_context = get_comprehensive_context(product_name, domain)
+        formatted_context = format_context_for_prompt(comprehensive_context, max_length=4500)
+    except Exception as e:
+        print(f"⚠️ RAG context error: {e}")
+        formatted_context = f"Context retrieval temporarily unavailable. Generate comprehensive QC parameters for {product_name}."
 
-        # Generate header and supplier info
-        header_text = f"{product_name} {doc_type}"
-        supplier_info = f"Supplier Name: {supplier_name}"
-        
-        # Check if user message contains reference document content
-        has_reference = "Reference document content" in user_message
-        
-        # Select appropriate system prompt
-        if is_digitization:
-            system_instructions = self._get_digitize_system_prompt()
-        else:
-            system_instructions = self._get_system_prompt()
+    # Generate header and supplier info
+    header_text = f"{product_name} {doc_type}"
+    supplier_info = f"Supplier Name: {supplier_name}"
+    
+    # Check if user message contains reference document content
+    has_reference = "Reference document content" in user_message
+    
+    # Select appropriate system prompt
+    if is_digitization:
+        system_instructions = self._get_digitize_system_prompt()
+    else:
+        system_instructions = self._get_system_prompt()
 
-        # Build context
-        context = formatted_context
-        
-        if has_reference:
-            context += f"""
+    # Build context
+    context = formatted_context
+    
+    if has_reference:
+        context += f"""
 
 **CRITICAL DIGITIZATION GUIDANCE**: The reference document content is provided to understand the STRUCTURE and PROFESSIONAL FORMAT of QC parameters. 
 
@@ -79,9 +95,9 @@ Use the reference to identify:
 5. Regulatory compliance requirements
 
 Create parameters with values, specifications, and input types SPECIFIC to {product_name} while maintaining the professional structure and comprehensive coverage of the reference document.
-            """
-        else:
-            context += f"""
+        """
+    else:
+        context += f"""
 
 For {product_name}, ensure you include MINIMUM 15+ parameters covering these MANDATORY categories:
 
@@ -103,10 +119,10 @@ For {product_name}, ensure you include MINIMUM 15+ parameters covering these MAN
 
 **PROFESSIONAL FORMATTING:**
 Match Al Kabeer Group's quality standards with proper section organization, comprehensive coverage, and intelligent parameter type selection.
-            """
+        """
 
-        # Construct the final system prompt
-        final_system_prompt = f"""
+    # Construct the final system prompt
+    final_system_prompt = f"""
 {system_instructions}
 
 User context:
@@ -168,41 +184,87 @@ Checklist, Dropdown, Image Upload, Remarks, Text Input, Numeric Input, Toggle
    ]
 """
 
-        messages = [
-            {"role": "system", "content": final_system_prompt},
-            {"role": "user", "content": user_message},
-        ]
+    messages = [
+        {"role": "system", "content": final_system_prompt},
+        {"role": "user", "content": user_message},
+    ]
 
-        try:
-            print(f"🤖 Calling Azure OpenAI for {product_name}...")
-            print(f"🔍 DEBUG: API call details:")
-            print(f"   - Endpoint: {self.client._azure_endpoint}")
-            print(f"   - Model: {self.deployment_name}")
-            print(f"   - API Version: {self.client._api_version}")
-            
-            response = self.client.chat.completions.create(
-                model=self.deployment_name,
-                messages=messages,
-                temperature=0.2,
-                max_tokens=4000
-            )
-            
-            result = response.choices[0].message.content.strip()
-            print(f"✅ Azure OpenAI response received ({len(result)} characters)")
-            
-            # Cache the response
-            azure_cache.cache_response(
-                user_message, doc_type, product_name, supplier_name, result
-            )
-            
-            return result
-            
-        except Exception as e:
-            print(f"❌ Azure OpenAI call failed: {str(e)}")
-            print(f"🔍 DEBUG: Exception type: {type(e)}")
-            import traceback
-            traceback.print_exc()
-            return f"Azure OpenAI call failed: {str(e)}"
+    try:
+        print(f"🤖 Calling Azure OpenAI for {product_name}...")
+        print(f"🔍 DEBUG: API call details:")
+        print(f"   - Endpoint: {self.client._azure_endpoint}")
+        print(f"   - Model: {self.deployment_name}")
+        print(f"   - API Version: {self.client._api_version}")
+        
+        response = self.client.chat.completions.create(
+            model=self.deployment_name,
+            messages=messages,
+            temperature=0.2,
+            max_tokens=4000
+        )
+        
+        result = response.choices[0].message.content.strip()
+        duration_ms = (time.time() - start_time) * 1000
+        
+        print(f"✅ Azure OpenAI response received ({len(result)} characters)")
+        
+        # Enhanced Application Insights tracking
+        from azure_monitoring import azure_monitoring
+        azure_monitoring.track_llm_call(
+            model=self.deployment_name,
+            product_name=product_name,
+            response_length=len(result),
+            duration_ms=duration_ms,
+            cache_hit=False
+        )
+        
+        # Track performance metric
+        azure_monitoring.track_performance(
+            operation="openai_generation",
+            duration_ms=duration_ms,
+            metadata={
+                "product_name": product_name,
+                "doc_type": doc_type,
+                "response_length": len(result),
+                "model": self.deployment_name
+            }
+        )
+        
+        # Cache the response
+        azure_cache.cache_response(
+            user_message, doc_type, product_name, supplier_name, result
+        )
+        
+        return result
+        
+    except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
+        
+        print(f"❌ Azure OpenAI call failed: {str(e)}")
+        print(f"🔍 DEBUG: Exception type: {type(e)}")
+        
+        # Enhanced error tracking
+        from azure_monitoring import azure_monitoring
+        azure_monitoring.track_error(
+            endpoint="openai_llm",
+            error_type=type(e).__name__,
+            error_message=str(e)
+        )
+        
+        # Track failed performance
+        azure_monitoring.track_performance(
+            operation="openai_generation_failed",
+            duration_ms=duration_ms,
+            metadata={
+                "product_name": product_name,
+                "error_type": type(e).__name__,
+                "error_message": str(e)[:100]
+            }
+        )
+        
+        import traceback
+        traceback.print_exc()
+        return f"Azure OpenAI call failed: {str(e)}"
     
     def _get_system_prompt(self):
         """Your existing SYSTEM_PROMPT"""
