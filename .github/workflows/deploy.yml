@@ -69,16 +69,10 @@ jobs:
     runs-on: ubuntu-latest
     if: success()  # Only run if deployment was successful
     permissions:
-      id-token: write  # ADDED: Required for Azure OIDC authentication
+      id-token: write  # Required for Azure OIDC authentication
     
     steps:
-    - name: Log in to Azure Container Registry
-      uses: azure/docker-login@v1
-      with:
-        login-server: ${{ env.REGISTRY }}
-        username: ${{ secrets.SWIFTCHECKAPI_REGISTRY_USERNAME }}
-        password: ${{ secrets.SWIFTCHECKAPI_REGISTRY_PASSWORD }}
-
+    # FIXED: Proper Azure authentication for ACR operations
     - name: Azure Login
       uses: azure/login@v1
       with:
@@ -86,32 +80,78 @@ jobs:
         tenant-id: ${{ secrets.SWIFTCHECKAPI_AZURE_TENANT_ID }}
         subscription-id: ${{ secrets.SWIFTCHECKAPI_AZURE_SUBSCRIPTION_ID }}
 
+    # FIXED: Verify Azure authentication and subscription
+    - name: Verify Azure connection
+      run: |
+        echo "🔍 Verifying Azure authentication..."
+        az account show
+        echo "📋 Available subscriptions:"
+        az account list --output table
+        echo "🔐 Current subscription:"
+        az account show --query '{name:name, id:id, state:state}' --output table
+
+    # FIXED: Use Docker login with registry credentials for ACR operations
+    - name: Log in to Azure Container Registry
+      uses: azure/docker-login@v1
+      with:
+        login-server: ${{ env.REGISTRY }}
+        username: ${{ secrets.SWIFTCHECKAPI_REGISTRY_USERNAME }}
+        password: ${{ secrets.SWIFTCHECKAPI_REGISTRY_PASSWORD }}
+
+    # FIXED: Alternative ACR login method using service principal
+    - name: Login to ACR using Azure CLI
+      run: |
+        echo "🔐 Logging into ACR using service principal..."
+        az acr login --name ${{ env.ACR_NAME }}
+
     - name: Get current image tags
       id: get-tags
       run: |
         echo "🔍 Getting tags for ${{ env.IMAGE_NAME }}..."
-        tags=$(az acr repository show-tags --name ${{ env.ACR_NAME }} --repository ${{ env.IMAGE_NAME }} --orderby time_desc --output json)
+        
+        # FIXED: Add error handling and alternative methods
+        if ! tags=$(az acr repository show-tags --name ${{ env.ACR_NAME }} --repository ${{ env.IMAGE_NAME }} --orderby time_desc --output json 2>/dev/null); then
+          echo "❌ Failed to get tags using az acr repository show-tags"
+          echo "🔄 Trying alternative method..."
+          
+          # Alternative: Use REST API through az rest
+          if ! tags=$(az rest --method GET --url "https://${{ env.REGISTRY }}/v2/${{ env.IMAGE_NAME }}/tags/list" --query 'tags' --output json 2>/dev/null); then
+            echo "❌ Alternative method also failed"
+            echo "⚠️ Setting empty tags array"
+            tags="[]"
+          fi
+        fi
+        
         echo "tags=$tags" >> $GITHUB_OUTPUT
-        tag_count=$(echo $tags | jq length)
+        tag_count=$(echo "$tags" | jq length)
         echo "📊 Found $tag_count total tags"
+        
+        # Debug: Show the tags
+        echo "🏷️ Current tags:"
+        echo "$tags" | jq -r '.[]' || echo "No tags found"
 
     - name: Clean up old image tags
       run: |
         tags='${{ steps.get-tags.outputs.tags }}'
-        tag_count=$(echo $tags | jq length)
+        tag_count=$(echo "$tags" | jq length)
         
-        if [ $tag_count -gt ${{ env.IMAGES_TO_KEEP }} ]; then
+        if [ "$tag_count" -gt ${{ env.IMAGES_TO_KEEP }} ]; then
           echo "🧹 Found $tag_count tags, keeping ${{ env.IMAGES_TO_KEEP }}, deleting $((tag_count - ${{ env.IMAGES_TO_KEEP }}))"
           
           # Get tags to delete (skip the first N to keep)
-          tags_to_delete=$(echo $tags | jq -r '.[${{ env.IMAGES_TO_KEEP }}:][]')
+          tags_to_delete=$(echo "$tags" | jq -r '.[${{ env.IMAGES_TO_KEEP }}:][]')
           
           for tag in $tags_to_delete; do
-            echo "🗑️ Deleting image tag: $tag"
-            az acr repository delete --name ${{ env.ACR_NAME }} --image "${{ env.IMAGE_NAME }}:$tag" --yes
+            if [ -n "$tag" ] && [ "$tag" != "null" ]; then
+              echo "🗑️ Deleting image tag: $tag"
+              # FIXED: Add error handling for delete operations
+              if ! az acr repository delete --name ${{ env.ACR_NAME }} --image "${{ env.IMAGE_NAME }}:$tag" --yes; then
+                echo "⚠️ Failed to delete tag: $tag (may not exist)"
+              fi
+            fi
           done
           
-          echo "✅ Deleted $((tag_count - ${{ env.IMAGES_TO_KEEP }})) old image tags"
+          echo "✅ Completed tag cleanup process"
         else
           echo "ℹ️ Only $tag_count tags found, no cleanup needed"
         fi
@@ -119,52 +159,68 @@ jobs:
     - name: Clean up untagged images
       run: |
         echo "🧹 Cleaning up untagged/dangling images..."
-        untagged_manifests=$(az acr repository show-manifests --name ${{ env.ACR_NAME }} --repository ${{ env.IMAGE_NAME }} --query "[?tags[0]==null].digest" -o tsv)
         
-        if [ -n "$untagged_manifests" ]; then
-          echo "$untagged_manifests" | while read -r digest; do
-            echo "🗑️ Deleting untagged manifest: $digest"
-            az acr repository delete --name ${{ env.ACR_NAME }} --image "${{ env.IMAGE_NAME }}@$digest" --yes
-          done
-          echo "✅ Cleaned up untagged images"
+        # FIXED: Add error handling for untagged image cleanup
+        if untagged_manifests=$(az acr repository show-manifests --name ${{ env.ACR_NAME }} --repository ${{ env.IMAGE_NAME }} --query "[?tags[0]==null].digest" -o tsv 2>/dev/null); then
+          if [ -n "$untagged_manifests" ]; then
+            echo "$untagged_manifests" | while read -r digest; do
+              if [ -n "$digest" ]; then
+                echo "🗑️ Deleting untagged manifest: $digest"
+                az acr repository delete --name ${{ env.ACR_NAME }} --image "${{ env.IMAGE_NAME }}@$digest" --yes || echo "⚠️ Failed to delete manifest: $digest"
+              fi
+            done
+            echo "✅ Cleaned up untagged images"
+          else
+            echo "ℹ️ No untagged images found"
+          fi
         else
-          echo "ℹ️ No untagged images found"
+          echo "⚠️ Could not retrieve manifest information"
         fi
 
     - name: Clean up old Container App revisions
       run: |
         echo "🧹 Cleaning up old Container App revisions..."
-        revisions=$(az containerapp revision list --name ${{ env.CONTAINER_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query '[].name' -o json)
-        revision_count=$(echo $revisions | jq length)
         
-        if [ $revision_count -gt ${{ env.IMAGES_TO_KEEP }} ]; then
-          echo "📊 Found $revision_count revisions, keeping ${{ env.IMAGES_TO_KEEP }}, deactivating $((revision_count - ${{ env.IMAGES_TO_KEEP }}))"
+        # FIXED: Add error handling for revision cleanup
+        if revisions=$(az containerapp revision list --name ${{ env.CONTAINER_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query '[].name' -o json 2>/dev/null); then
+          revision_count=$(echo "$revisions" | jq length)
           
-          # Get revisions to deactivate (skip the first N to keep)
-          revisions_to_deactivate=$(echo $revisions | jq -r '.[${{ env.IMAGES_TO_KEEP }}:][]')
-          
-          for revision in $revisions_to_deactivate; do
-            echo "🗑️ Deactivating revision: $revision"
-            az containerapp revision deactivate --name ${{ env.CONTAINER_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --revision $revision || true
-          done
-          
-          echo "✅ Deactivated $((revision_count - ${{ env.IMAGES_TO_KEEP }})) old revisions"
+          if [ "$revision_count" -gt ${{ env.IMAGES_TO_KEEP }} ]; then
+            echo "📊 Found $revision_count revisions, keeping ${{ env.IMAGES_TO_KEEP }}, deactivating $((revision_count - ${{ env.IMAGES_TO_KEEP }}))"
+            
+            # Get revisions to deactivate (skip the first N to keep)
+            revisions_to_deactivate=$(echo "$revisions" | jq -r '.[${{ env.IMAGES_TO_KEEP }}:][]')
+            
+            for revision in $revisions_to_deactivate; do
+              if [ -n "$revision" ] && [ "$revision" != "null" ]; then
+                echo "🗑️ Deactivating revision: $revision"
+                az containerapp revision deactivate --name ${{ env.CONTAINER_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --revision "$revision" || echo "⚠️ Failed to deactivate revision: $revision"
+              fi
+            done
+            
+            echo "✅ Completed revision cleanup process"
+          else
+            echo "ℹ️ Only $revision_count revisions found, no cleanup needed"
+          fi
         else
-          echo "ℹ️ Only $revision_count revisions found, no cleanup needed"
+          echo "⚠️ Could not retrieve revision information"
         fi
 
     - name: Show final cleanup summary
       run: |
         echo "📊 === CLEANUP SUMMARY ==="
-        az acr repository show --name ${{ env.ACR_NAME }} --repository ${{ env.IMAGE_NAME }}
+        
+        # FIXED: Add error handling for summary commands
+        echo "🏷️ Container Registry Info:"
+        az acr show --name ${{ env.ACR_NAME }} --query '{name:name, loginServer:loginServer, sku:sku.name}' -o table || echo "⚠️ Could not retrieve ACR info"
         
         echo ""
         echo "📋 Remaining image tags:"
-        az acr repository show-tags --name ${{ env.ACR_NAME }} --repository ${{ env.IMAGE_NAME }} --orderby time_desc
+        az acr repository show-tags --name ${{ env.ACR_NAME }} --repository ${{ env.IMAGE_NAME }} --orderby time_desc || echo "⚠️ Could not retrieve tags"
         
         echo ""
         echo "🔄 Active Container App revisions:"
-        az containerapp revision list --name ${{ env.CONTAINER_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query '[].{Name:name,CreatedTime:properties.createdTime,Active:properties.active}' -o table
+        az containerapp revision list --name ${{ env.CONTAINER_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query '[].{Name:name,CreatedTime:properties.createdTime,Active:properties.active}' -o table || echo "⚠️ Could not retrieve revision info"
         
         echo ""
         echo "💾 Storage cleanup complete! 🎉"
